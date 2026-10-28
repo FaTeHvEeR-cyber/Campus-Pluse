@@ -1,0 +1,6 @@
+{
+  "name": "CampusPulse AI — University Tech-Fest & Event Execution Engine",
+  "description": "Structured, state-driven University Tech-Fest & Community Event Execution Engine with dependency-sequenced scheduling, dual-track INR budgeting, volunteer command center, crisis simulator, and vendor quote comparator.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
