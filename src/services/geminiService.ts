@@ -25,7 +25,7 @@ async function callPlannerEndpoint<T>(
   fallback: () => T
 ): Promise<T> {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 3500);
+  const timeoutId = setTimeout(() => controller.abort(), 25000);
   try {
     const response = await fetch('/api/planner', {
       method: 'POST',

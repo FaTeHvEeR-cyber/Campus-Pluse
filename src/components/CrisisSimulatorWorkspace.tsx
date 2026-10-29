@@ -15,7 +15,7 @@ import {
   Wallet,
   Zap,
 } from 'lucide-react';
-import {
+import type {
   CrisisScenario,
   CrisisSimulationResult,
   CrisisTradeOffOption,

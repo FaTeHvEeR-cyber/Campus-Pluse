@@ -18,7 +18,7 @@ import {
   Wallet,
   X,
 } from 'lucide-react';
-import {
+import type {
   ClarifyingQuestion,
   FestCategoryType,
   FestIntakeConfig,

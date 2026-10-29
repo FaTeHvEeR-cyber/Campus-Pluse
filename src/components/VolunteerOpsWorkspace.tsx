@@ -18,7 +18,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import {
+import type {
   CoordinatorLogEntry,
   DepartmentName,
   ExecutiveOpsSummary,

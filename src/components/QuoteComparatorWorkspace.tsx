@@ -14,7 +14,7 @@ import {
   TrendingDown,
   TrendingUp,
 } from 'lucide-react';
-import { BudgetCategory, FestMasterPlan, VendorQuote } from '../types';
+import type { BudgetCategory, FestMasterPlan, VendorQuote } from '../types';
 import {
   computeDualTrackBudgetMetrics,
   formatINR,
@@ -198,7 +198,7 @@ export const QuoteComparatorWorkspace: React.FC<
                 type="button"
                 onClick={onEvaluateQuotesWithAI}
                 disabled={isEvaluatingQuotes}
-                aria-label="Compare Vendor Quotes with AI"
+                aria-label="Compare Quotes with Gemini AI"
                 className="px-3.5 py-2 text-xs font-semibold text-slate-900 bg-slate-100 border border-slate-300 rounded-lg hover:bg-slate-200 transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-60"
               >
                 {isEvaluatingQuotes ? (
@@ -209,7 +209,7 @@ export const QuoteComparatorWorkspace: React.FC<
                 ) : (
                   <>
                     <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-                    Compare Vendor Quotes with AI
+                    Compare Quotes with Gemini AI
                   </>
                 )}
               </button>

@@ -20,7 +20,7 @@ import {
   getEffectiveFestCategory,
 } from '../src/utils/festEngine';
 
-const MODEL_NAME = 'gemini-3.8-flash';
+const MODEL_NAME = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
 function getServerGenAI(): GoogleGenAI | null {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -287,7 +287,7 @@ export const CRISIS_SIMULATION_SCHEMA: Schema = {
   ],
 };
 
-export const VENDOR_QUOTES_EVALUATION_SCHEMA: Schema = {
+export const VENDOR_QUOTE_COMPARISON_SCHEMA: Schema = {
   type: Type.ARRAY,
   items: {
     type: Type.OBJECT,
@@ -310,8 +310,24 @@ export const VENDOR_QUOTES_EVALUATION_SCHEMA: Schema = {
   },
 };
 
-export async function handlePlannerApiRequest(req: Request, res: Response) {
-  const { action, payload } = req.body ?? {};
+export const VENDOR_QUOTES_EVALUATION_SCHEMA: Schema =
+  VENDOR_QUOTE_COMPARISON_SCHEMA;
+
+export async function handlePlannerApiRequest(
+  req: Request | any,
+  res: Response | any
+) {
+  if (req.method === 'OPTIONS') {
+    res.setHeader?.('Access-Control-Allow-Origin', '*');
+    res.setHeader?.('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader?.('Access-Control-Allow-Headers', 'Content-Type');
+    return res.status?.(200).end?.();
+  }
+
+  const rawBody = req.body;
+  const parsedBody =
+    typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody;
+  const { action, payload } = parsedBody ?? {};
   const ai = getServerGenAI();
 
   try {
@@ -493,4 +509,8 @@ Cover these 4 categories in order: "Campus Permissions", "Multi-Track Room Clash
       error instanceof Error ? error.message : 'Unexpected planner error';
     return res.status(500).json({ error: message });
   }
+}
+
+export default async function handler(req: any, res: any) {
+  return handlePlannerApiRequest(req, res);
 }

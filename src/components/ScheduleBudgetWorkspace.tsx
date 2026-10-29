@@ -13,7 +13,7 @@ import {
   Sparkles,
   Unlock,
 } from 'lucide-react';
-import {
+import type {
   BudgetCategory,
   BudgetLineItem,
   DepartmentName,

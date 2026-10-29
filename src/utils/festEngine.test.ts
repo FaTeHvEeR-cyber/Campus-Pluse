@@ -475,3 +475,73 @@ test('buildExecutiveOpsSummaryFromPlan and buildCoordinatorOutreachFromTask refl
   );
 });
 
+test('evaluateScheduleDependencies marks downstream tasks blocked when prerequisites are Pending', () => {
+  const scheduleNodes = [
+    {
+      id: 'node-approval',
+      code: 'APPR-01',
+      title: 'Dean Approval Lock',
+      track: 'Administration Track',
+      phase: 'Phase 1: University Approvals, Venue Lock & Core Sponsor MoUs',
+      tier: 'Critical-Path Approval',
+      daySlot: 'Weeks 4-3 Before Fest',
+      venue: 'Dean Office',
+      ownerCoordinator: 'Aarav Sharma',
+      department: 'Core Executive',
+      dependsOnIds: [],
+      status: 'Pending',
+      blockedIfDelayedWarning: 'Dean approval blocks campus entry and venue rigging',
+      blockerNote: 'Awaiting final signature',
+    },
+    {
+      id: 'node-av',
+      code: 'AV-01',
+      title: 'Rigging Stage Sound & Lighting',
+      track: 'Main Stage Track',
+      phase: 'Phase 2: AV/Network Infrastructure & Vendor Contracts',
+      tier: 'Downstream Vendor/Volunteer',
+      daySlot: 'Day -1 Evening',
+      venue: 'Main Auditorium',
+      ownerCoordinator: 'Vikram Mehta',
+      department: 'Stage & PR Squad',
+      dependsOnIds: ['node-approval'],
+      status: 'Pending',
+      blockedIfDelayedWarning: 'AV vendor cannot rig without Dean permission',
+      blockerNote: '',
+    },
+  ];
+
+  const analysis = evaluateScheduleDependencies(scheduleNodes);
+  assert.equal(analysis.criticalPathNodes.length, 1);
+  assert.equal(analysis.downstreamNodes.length, 1);
+  assert.equal(analysis.unresolvedDependenciesByNodeId['node-av']?.length, 1);
+  assert.equal(
+    analysis.unresolvedDependenciesByNodeId['node-av'][0].title,
+    'Dean Approval Lock'
+  );
+});
+
+test('lockVendorQuoteInPlan updates master budget and recomputes dual-track metrics with locked quote', () => {
+  const basePlan = buildPresetMasterPlan('technoverse');
+  const cateringQuote = basePlan.vendorQuotes.find(
+    (q) => q.category === 'Catering, Stalls & Midnight Refreshments'
+  );
+  assert.ok(cateringQuote);
+
+  const updatedPlan = lockVendorQuoteInPlan(basePlan, cateringQuote.id);
+  const cateringItem = updatedPlan.budget.find(
+    (b) => b.category === 'Catering, Stalls & Midnight Refreshments'
+  );
+  assert.ok(cateringItem);
+  assert.equal(cateringItem.quoteStatus, 'Confirmed Quote');
+  assert.equal(cateringItem.confirmedQuoteINR, cateringQuote.totalQuoteINR);
+
+  const metrics = computeDualTrackBudgetMetrics(
+    updatedPlan.budget,
+    updatedPlan.intake.totalBudgetINR,
+    updatedPlan.intake.expectedFootfall
+  );
+  assert.ok(metrics.totalConfirmedLockedINR > 0);
+  assert.ok(metrics.confirmedItemsCount >= 1);
+});
+
