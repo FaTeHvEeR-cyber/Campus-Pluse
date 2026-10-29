@@ -1,5 +1,6 @@
-import test from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
+import type { ScheduleNode } from '../types';
 import {
   applyCrisisTradeOffToPlan,
   buildCoordinatorOutreachFromTask,
@@ -372,18 +373,18 @@ test('buildExecutiveOpsSummaryFromPlan and buildCoordinatorOutreachFromTask refl
   const customTasks = generated.volunteerTasks.map((t, idx) =>
     idx === 0
       ? {
-          ...t,
-          coordinatorName: 'Fatehveer Singh',
-          coordinatorRole: 'Drone Safety & Arena Marshall',
-          department: 'Drone Safety & Arena Marshall',
-        }
+        ...t,
+        coordinatorName: 'Fatehveer Singh',
+        coordinatorRole: 'Drone Safety & Arena Marshall',
+        department: 'Drone Safety & Arena Marshall',
+      }
       : idx === 1
         ? {
-            ...t,
-            coordinatorName: 'Simran Kaur',
-            coordinatorRole: 'AV & Telemetry Crew',
-            department: 'AV & Telemetry Crew',
-          }
+          ...t,
+          coordinatorName: 'Simran Kaur',
+          coordinatorRole: 'AV & Telemetry Crew',
+          department: 'AV & Telemetry Crew',
+        }
         : t
   );
 
@@ -415,9 +416,9 @@ test('buildExecutiveOpsSummaryFromPlan and buildCoordinatorOutreachFromTask refl
   );
   assert.ok(
     summary.executiveProgressSnapshot.includes('Gurpreet Gill') &&
-      summary.executiveProgressSnapshot.includes(
-        'LiPo Battery & Fire Safety Squad'
-      )
+    summary.executiveProgressSnapshot.includes(
+      'LiPo Battery & Fire Safety Squad'
+    )
   );
 
   // Verify Immediate Coordinator Action Plan has custom names & roles and zero stale TechnoVerse names
@@ -476,7 +477,7 @@ test('buildExecutiveOpsSummaryFromPlan and buildCoordinatorOutreachFromTask refl
 });
 
 test('evaluateScheduleDependencies marks downstream tasks blocked when prerequisites are Pending', () => {
-  const scheduleNodes = [
+  const scheduleNodes: ScheduleNode[] = [
     {
       id: 'node-approval',
       code: 'APPR-01',

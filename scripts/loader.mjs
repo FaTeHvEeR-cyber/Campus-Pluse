@@ -1,4 +1,7 @@
 export async function resolve(specifier, context, nextResolve) {
+  if (specifier === 'vitest') {
+    return await nextResolve('node:test', context);
+  }
   try {
     return await nextResolve(specifier, context);
   } catch (err) {
@@ -12,4 +15,3 @@ export async function resolve(specifier, context, nextResolve) {
     throw err;
   }
 }
-
