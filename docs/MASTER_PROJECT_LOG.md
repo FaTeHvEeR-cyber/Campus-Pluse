@@ -53,10 +53,18 @@ Based on the official Challenge 5 Explainer Session (presented by Subject Matter
   4. **Missing `README.md` & Tracked `.aistudio/` Folder:** Removing `.aistudio/artifacts/brain/` from Git tracking and adding a comprehensive `README.md` will significantly boost the Hack2skill Code Quality and Problem Statement Alignment scores.
   5. **AI Vendor Quote Comparison Action:** Adding a 6th `evaluateVendorQuotes` action in `api/planner.ts` and `src/services/geminiService.ts` so `QuoteComparatorWorkspace.tsx` also invokes live Gemini analysis.
 
+### Entry 6 — Phase 2 Execution in Google Antigravity & Vercel Live Deployment Hardening (Oct 29, 2026, 5:00 PM IST)
+- **Hardening Completed in Google Antigravity:**
+  1. **Gemini Model Identifier Fixed**: Changed `MODEL_NAME` in `api/planner.ts` to `process.env.GEMINI_MODEL || 'gemini-2.5-flash'` to guarantee successful execution with standard Google AI Studio keys.
+  2. **Vercel Serverless Route Handler**: Added `export default async function handler(req: any, res: any)` in `api/planner.ts` with CORS preflight and safe JSON body normalization, paired with root `vercel.json` routing configuration.
+  3. **Expanded Unit Test Suite (19/19 Passing)**: Added `scripts/loader.mjs` test runner and expanded `src/utils/festEngine.test.ts` to cover schedule dependency blocking and vendor quote budget locking. Verified all 19 tests pass 100% in ~200ms.
+  4. **Repository Hygiene**: Completely untracked 31 `.aistudio/artifacts/brain/` media png files from Git, deleted local `.aistudio/` directory, and added `.aistudio/` and `.vercel/` to `.gitignore`.
+  5. **Secure Environment Variables**: Updated `.env.example` with clear documentation for `GEMINI_API_KEY=your_google_ai_studio_api_key_here` and `GEMINI_MODEL=gemini-2.5-flash`. Verified zero secrets or exposed keys exist in git tracking.
+  6. **Comprehensive Project README.md**: Authored full, professional root `README.md` covering Challenge 5 rubric alignment, target persona, architecture diagram, 5 workspaces, schemas, and Vercel deployment guide.
+  7. **Git Commit & Push**: Committed as `feat: complete Phase 2 hardening upgrades for Vercel deployment` (commit `4ab4896`) and pushed cleanly to `origin/main`.
+
 ---
 
 ## 4. Upcoming Log Placeholders (To Be Updated As We Progress)
-- **Entry 6 — Phase 2 Execution in Google Antigravity & Vercel Live Deployment:** (Running the repo-specific Phase 2 prompt in Antigravity, pushing to FaTeHvEeR-cyber/Campus-Pluse, and deploying live on Vercel)
 - **Entry 7 — Hack2skill Attempt 1 Submission & Diagnostic Score Report Analysis:** (Submitting Attempt 1 and logging the automated Code Quality report)
 - **Entry 8 — Phase 3 Codex Audit, Attempt 2 Refinements, Demo Video & LinkedIn Post:** (Completing final audit before Oct 31 and submitting Attempt 2)
-
