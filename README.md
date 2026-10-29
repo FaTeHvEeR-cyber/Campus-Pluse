@@ -227,3 +227,4 @@ Deploying CampusPulse AI to Vercel takes under 2 minutes:
 ---
 
 *Developed with Google AI Studio, Google Antigravity, and Gemini 2.5 Flash for PromptWars Challenge 5.*
+
