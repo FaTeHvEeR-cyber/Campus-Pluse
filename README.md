@@ -4,7 +4,7 @@
 [![Model](https://img.shields.io/badge/Gemini%202.5%20Flash-Structured%20JSON-34A853?style=flat-square&logo=googlegemini)](https://aistudio.google.com/)
 [![React](https://img.shields.io/badge/React%2019-Vite%20SPA-61DAFB?style=flat-square&logo=react)](https://react.dev/)
 [![Serverless](https://img.shields.io/badge/Vercel-Serverless%20Functions-000000?style=flat-square&logo=vercel)](https://vercel.com/)
-[![Tests](https://img.shields.io/badge/Unit%20Tests-19%2F19%20Passing-emerald?style=flat-square)](file:///d:/Campus-Pulse/Campus-Pluse/src/utils/festEngine.test.ts)
+[![Tests](https://img.shields.io/badge/Unit%20Tests-Passing-emerald?style=flat-square)](src/utils/festEngine.test.ts)
 
 > **Flagship submission for Google for Developers x Hack2skill PromptWars Challenge 5: "GenAI-Powered Celebration & Event Planner"**  
 > Built for student festival coordinators, technical society leads, and department chairs managing high-stakes inter-college festivals, 24-hour hackathons, and multi-track symposia.
@@ -148,18 +148,18 @@ All Gemini API integrations utilize `@google/genai` (`gemini-2.5-flash`) with st
 
 ## 6. Engineering Blueprints & Documentation Hub
 
-Detailed documentation, sprint plans, and engineering logs are located inside the [`docs/`](file:///d:/Campus-Pulse/Campus-Pluse/docs) directory:
+Detailed documentation, sprint plans, and engineering logs are located inside the [`docs/`](docs/) directory:
 
-- [docs/MASTER_PROJECT_LOG.md](file:///d:/Campus-Pulse/Campus-Pluse/docs/MASTER_PROJECT_LOG.md) — Comprehensive engineering log tracking Challenge 5 requirements, persona selection rationale, pre-deployment audit findings, and milestone logs.
-- [docs/PHASE_1_AI_STUDIO_BLUEPRINT.md](file:///d:/Campus-Pulse/Campus-Pluse/docs/PHASE_1_AI_STUDIO_BLUEPRINT.md) — Phase 1 Google AI Studio prototyping blueprint, system instructions, master build prompts, and follow-up polish prompts.
-- [docs/PHASE_2_ANTIGRAVITY_BLUEPRINT.md](file:///d:/Campus-Pulse/Campus-Pluse/docs/PHASE_2_ANTIGRAVITY_BLUEPRINT.md) — Phase 2 Google Antigravity hardening blueprint, pre-deployment audit fixes, Vitest setup, and Vercel routing configuration.
+- [docs/MASTER_PROJECT_LOG.md](docs/MASTER_PROJECT_LOG.md) — Comprehensive engineering log tracking Challenge 5 requirements, persona selection rationale, pre-deployment audit findings, and milestone logs.
+- [docs/PHASE_1_AI_STUDIO_BLUEPRINT.md](docs/PHASE_1_AI_STUDIO_BLUEPRINT.md) — Phase 1 Google AI Studio prototyping blueprint, system instructions, master build prompts, and follow-up polish prompts.
+- [docs/PHASE_2_ANTIGRAVITY_BLUEPRINT.md](docs/PHASE_2_ANTIGRAVITY_BLUEPRINT.md) — Phase 2 Google Antigravity hardening blueprint, pre-deployment audit fixes, Vitest setup, and Vercel routing configuration.
 
 ---
 
 ## 7. Local Development, Testing & Verification
 
 ### Prerequisites
-* **Node.js**: v20+ or v22+
+* **Node.js**: v22.x (matches `"node": ">=22.12.0"` in `package.json`)
 * **npm**: v10+
 * **Google AI Studio API Key**: Get a free API key from [aistudio.google.com](https://aistudio.google.com/app/apikey)
 

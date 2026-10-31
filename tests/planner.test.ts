@@ -152,3 +152,137 @@ test('scoring rejects unknown or repeated IDs', async () => {
     category: quote.category, quotes: [quote], aiEstimateINR: 1,
   } })).body).toMatchObject({ source: 'engine-calibrated', data: [{ id: quote.id }] });
 });
+
+test('valid executive ops summary returns validated model data when ai is available', async () => {
+  vi.stubEnv('GEMINI_API_KEY', 'test-only-key');
+  const mockSummary = {
+    generatedAt: '10:00 AM IST',
+    readinessScoreLabel: '85% Readiness',
+    executiveProgressSnapshot: 'On track across all core deliverables',
+    headlineBottleneck: 'Estate Office NOC pending',
+    criticalRisks: ['Power load sanction delay'],
+    immediateNextActions: [
+      { owner: 'Aarav Lead', squad: 'Core Executive', action: 'Sign MoU', timeframe: 'Next 24h' },
+    ],
+    broadcasts: [
+      {
+        audience: 'Volunteer Leads',
+        channel: 'WhatsApp Squad Broadcast',
+        subjectLine: 'Shift Roster Briefing',
+        messageBody: 'Report to Main Gate at 08:00 AM',
+      },
+    ],
+  };
+  generateContent.mockResolvedValue({ text: JSON.stringify(mockSummary) });
+  const result = await request({
+    action: 'generateExecutiveOpsSummary',
+    payload: { plan: CLEAN_INITIAL_MASTER_PLAN },
+  });
+  expect(result.status).toBe(200);
+  expect(result.body).toMatchObject({ source: 'gemini-2.5-flash', data: mockSummary });
+});
+
+test('valid outreach message returns validated model data when ai is available', async () => {
+  vi.stubEnv('GEMINI_API_KEY', 'test-only-key');
+  const mockDraft = {
+    recipientName: 'Vikram Mehta',
+    recipientRole: 'Stage Lead · OPS-01',
+    channel: 'WhatsApp Squad Broadcast',
+    subjectLine: 'Stage AV Rigging Soundcheck',
+    messageBody: 'Please confirm line-array delivery by 14:00 IST',
+    actionChecklist: ['Verify 3-phase earthing', 'Test wireless mics'],
+  };
+  generateContent.mockResolvedValue({ text: JSON.stringify(mockDraft) });
+  const task = INITIAL_FEST_MASTER_PLAN.volunteerTasks[0];
+  const result = await request({
+    action: 'draftOutreachMessage',
+    payload: { task, festName: intake.festName, intake },
+  });
+  expect(result.status).toBe(200);
+  expect(result.body).toMatchObject({ source: 'gemini-2.5-flash', data: mockDraft });
+});
+
+test('valid crisis simulation returns validated model data when ai is available', async () => {
+  vi.stubEnv('GEMINI_API_KEY', 'test-only-key');
+  const mockCrisis = {
+    scenarioId: 'crisis-reg-surge',
+    scenarioTitle: 'Registration Surge: +150 Participants',
+    rippleAnalysis: 'Increases catering and power loads',
+    impactedCategories: ['Catering, Stalls & Midnight Refreshments'],
+    impactedVenueTracks: ['Main Auditorium'],
+    impactedSquads: ['Logistics & Food Committee'],
+    beforeFootfall: 500,
+    afterFootfall: 650,
+    ProjectedUnmitigatedOverrunINR: 31000,
+    options: [
+      {
+        id: 'opt-live-1',
+        optionLabel: 'Strategy A',
+        strategyTitle: 'Absorb Within Buffer',
+        summary: 'Top up meal plates',
+        budgetDeltaINR: 14500,
+        targetBudgetCategory: 'Catering, Stalls & Midnight Refreshments',
+        scheduleAdjustment: 'Extend catering window',
+        affectedScheduleId: 'sched-ops-2',
+        volunteerReallocation: 'Reassign 3 volunteers',
+        affectedTaskId: 'vt-4',
+        riskTradeOff: 'Draws from buffer',
+        recommended: true,
+      },
+      {
+        id: 'opt-live-2',
+        optionLabel: 'Strategy B',
+        strategyTitle: 'Cap Registrations',
+        summary: 'Cap at 500',
+        budgetDeltaINR: 0,
+        targetBudgetCategory: 'Catering, Stalls & Midnight Refreshments',
+        scheduleAdjustment: 'No delay',
+        affectedScheduleId: 'sched-ops-2',
+        volunteerReallocation: 'No change',
+        affectedTaskId: 'vt-4',
+        riskTradeOff: 'Zero cost',
+      },
+      {
+        id: 'opt-live-3',
+        optionLabel: 'Strategy C',
+        strategyTitle: 'Full Expansion',
+        summary: 'Order extra meals',
+        budgetDeltaINR: 25000,
+        targetBudgetCategory: 'Catering, Stalls & Midnight Refreshments',
+        scheduleAdjustment: 'Add extra stall',
+        affectedScheduleId: 'sched-ops-2',
+        volunteerReallocation: 'Deploy extra crew',
+        affectedTaskId: 'vt-4',
+        riskTradeOff: 'High cost',
+      },
+    ],
+  };
+  generateContent.mockResolvedValue({ text: JSON.stringify(mockCrisis) });
+  const result = await request({
+    action: 'simulateCrisisRipple',
+    payload: { scenarioId: 'crisis-reg-surge', plan: CLEAN_INITIAL_MASTER_PLAN },
+  });
+  expect(result.status).toBe(200);
+  expect(result.body).toMatchObject({ source: 'gemini-2.5-flash', data: mockCrisis });
+});
+
+test.each(['generateExecutiveOpsSummary', 'draftOutreachMessage', 'simulateCrisisRipple'])(
+  '%s gracefully falls back to deterministic when model output fails validation',
+  async (action) => {
+    vi.stubEnv('GEMINI_API_KEY', 'test-only-key');
+    generateContent.mockResolvedValue({ text: '{"malformed": true}' });
+    const payload =
+      action === 'generateExecutiveOpsSummary'
+        ? { plan: CLEAN_INITIAL_MASTER_PLAN }
+        : action === 'draftOutreachMessage'
+          ? {
+              task: INITIAL_FEST_MASTER_PLAN.volunteerTasks[0],
+              festName: intake.festName,
+              intake,
+            }
+          : { scenarioId: 'crisis-reg-surge', plan: CLEAN_INITIAL_MASTER_PLAN };
+    const result = await request({ action, payload });
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({ source: 'deterministic' });
+  }
+);

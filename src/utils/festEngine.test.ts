@@ -629,3 +629,186 @@ test('lockVendorQuoteInPlan updates master budget and recomputes dual-track metr
   assert.ok(metrics.confirmedItemsCount >= 1);
 });
 
+test('applyCrisisTradeOffToPlan preserves confirmed vendor quote immutability and computeTradeOffBudgetPreview reflects 0 effective spend delta', () => {
+  const plan = structuredClone(INITIAL_FEST_MASTER_PLAN);
+  const avItem = plan.budget.find((b) => b.category === 'Stage, Sound & AV Rigging');
+  assert.ok(avItem);
+  assert.equal(avItem.quoteStatus, 'Confirmed Quote');
+  assert.equal(avItem.confirmedQuoteINR, 88000);
+  const lockedId = avItem.lockedVendorId;
+  const lockedName = avItem.lockedVendorName;
+
+  const shockOption = {
+    id: 'opt-av-surge',
+    optionLabel: 'Strategy C · Emergency Add-On Rigging',
+    strategyTitle: 'Add Overhead Truss Array',
+    summary: 'Requires additional rigging',
+    budgetDeltaINR: 20000,
+    targetBudgetCategory: 'Stage, Sound & AV Rigging' as const,
+    scheduleAdjustment: 'OPS-01 shifted by 30 mins to Main Auditorium',
+    affectedScheduleId: 'sched-ops-1',
+    volunteerReallocation: 'Reassign 2 volunteers to main stage load-in',
+    affectedTaskId: 'vt-2',
+    riskTradeOff: 'Higher estimate without changing confirmed quotation',
+  };
+
+  const preview = computeTradeOffBudgetPreview(
+    plan.budget,
+    plan.intake.totalBudgetINR,
+    plan.intake.expectedFootfall,
+    shockOption
+  );
+  assert.equal(preview.currentCategoryAllocationINR, 88000);
+  assert.equal(preview.projectedCategoryAllocationINR, 88000);
+  assert.equal(preview.projectedTotalSpendINR, preview.currentTotalSpendINR);
+
+  const updatedPlan = applyCrisisTradeOffToPlan(plan, 'Rigging Surge', shockOption);
+  const updatedAvItem = updatedPlan.budget.find((b) => b.category === 'Stage, Sound & AV Rigging');
+  assert.ok(updatedAvItem);
+  // Confirmed quote remains 100% immutable
+  assert.equal(updatedAvItem.confirmedQuoteINR, 88000);
+  assert.equal(updatedAvItem.lockedVendorId, lockedId);
+  assert.equal(updatedAvItem.lockedVendorName, lockedName);
+  assert.equal(updatedAvItem.quoteStatus, 'Confirmed Quote');
+  // Delta applied to aiEstimateINR with scope note
+  assert.equal(updatedAvItem.aiEstimateINR, avItem.aiEstimateINR + 20000);
+  assert.ok(updatedAvItem.notes.includes('Vendor quote remains locked at ₹88,000'));
+});
+
+test('buildCrisisSimulationFromIntake dispatches crisis-volunteer-dropout with real schedule and task IDs', () => {
+  const plan = structuredClone(INITIAL_FEST_MASTER_PLAN);
+  const result = buildCrisisSimulationFromIntake('crisis-volunteer-dropout', plan);
+  assert.equal(result.scenarioId, 'crisis-volunteer-dropout');
+  assert.equal(result.beforeFootfall, result.afterFootfall);
+  assert.equal(result.options.length, 3);
+  assert.equal(result.options.filter((o) => o.recommended).length, 1);
+  for (const option of result.options) {
+    assert.ok(option.affectedScheduleId);
+    assert.ok(plan.schedule.some((s) => s.id === option.affectedScheduleId));
+    assert.ok(option.affectedTaskId);
+    assert.ok(plan.volunteerTasks.some((t) => t.id === option.affectedTaskId));
+  }
+});
+
+test('buildCrisisSimulationFromIntake supports crisis-auditorium-clash and populates real node IDs', () => {
+  const plan = structuredClone(INITIAL_FEST_MASTER_PLAN);
+  const result = buildCrisisSimulationFromIntake('crisis-auditorium-clash', plan);
+  assert.equal(result.scenarioId, 'crisis-auditorium-clash');
+  assert.equal(result.options.length, 3);
+  for (const option of result.options) {
+    assert.ok(option.affectedScheduleId);
+    assert.ok(plan.schedule.some((s) => s.id === option.affectedScheduleId));
+    assert.ok(option.affectedTaskId);
+    assert.ok(plan.volunteerTasks.some((t) => t.id === option.affectedTaskId));
+  }
+});
+
+test('applyCrisisTradeOffToPlan updates footfall, schedules, volunteer tasks, and enforces idempotency', () => {
+  const plan = structuredClone(INITIAL_FEST_MASTER_PLAN);
+  const surgeResult = buildCrisisSimulationFromIntake('crisis-reg-surge', plan);
+  const chosenOption = surgeResult.options[0];
+
+  const updatedOnce = applyCrisisTradeOffToPlan(
+    plan,
+    surgeResult.scenarioTitle,
+    chosenOption,
+    surgeResult
+  );
+  assert.equal(updatedOnce.intake.expectedFootfall, surgeResult.afterFootfall);
+  assert.equal(updatedOnce.appliedShocks.length, plan.appliedShocks.length + 1);
+  assert.equal(updatedOnce.appliedShocks[0].id, chosenOption.id);
+
+  const targetedTask = updatedOnce.volunteerTasks.find(
+    (t) => t.id === chosenOption.affectedTaskId
+  );
+  assert.ok(targetedTask);
+  assert.ok(targetedTask.bottleneckReason?.includes('Mitigated via Strategy A'));
+
+  // Idempotency check: applying the exact same option again returns plan unchanged
+  const updatedTwice = applyCrisisTradeOffToPlan(
+    updatedOnce,
+    surgeResult.scenarioTitle,
+    chosenOption,
+    surgeResult
+  );
+  assert.equal(updatedTwice, updatedOnce);
+  assert.equal(updatedTwice.appliedShocks.length, updatedOnce.appliedShocks.length);
+});
+
+test('evaluateScheduleDependencies treats missing prerequisite IDs as unresolved dependencies', () => {
+  const scheduleNodes: ScheduleNode[] = [
+    {
+      id: 'node-downstream',
+      code: 'OPS-99',
+      title: 'Gate Setup with Non-Existent Dependency',
+      track: 'Main Track',
+      phase: 'Phase 3: Inter-College PR, Registrations & Volunteer Shift Roster',
+      tier: 'Downstream Vendor/Volunteer',
+      daySlot: 'Day 1 · 08:00 AM',
+      venue: 'Main Gate',
+      ownerCoordinator: 'Rohan Lead',
+      department: 'Registration & Hospitality Desk',
+      dependsOnIds: ['missing-parent-id-999'],
+      status: 'In-Progress',
+      blockedIfDelayedWarning: 'Blocked by non-existent milestone',
+    },
+  ];
+
+  const analysis = evaluateScheduleDependencies(scheduleNodes);
+  const unresolved = analysis.unresolvedDependenciesByNodeId['node-downstream'];
+  assert.ok(unresolved);
+  assert.equal(unresolved.length, 1);
+  assert.equal(unresolved[0].id, 'missing-parent-id-999');
+  assert.equal(unresolved[0].code, 'MISSING');
+  assert.equal(unresolved[0].status, 'Blocked');
+});
+
+test('buildPlanFromUserIntake priority weights materially alter proportional category budgets within budget and sponsor caps', () => {
+  const baseIntake = {
+    ...CLEAN_INITIAL_MASTER_PLAN.intake,
+    totalBudgetINR: 500000,
+    sponsorTargetINR: 200000,
+  };
+
+  const techHeavyIntake = {
+    ...baseIntake,
+    priorityWeights: {
+      techInfraWifi: 95,
+      stageAvProduction: 10,
+      foodNightRefreshments: 50,
+      prizesSwag: 20,
+      guestJudgeHospitality: 10,
+    },
+  };
+
+  const stageHeavyIntake = {
+    ...baseIntake,
+    priorityWeights: {
+      techInfraWifi: 10,
+      stageAvProduction: 95,
+      foodNightRefreshments: 50,
+      prizesSwag: 20,
+      guestJudgeHospitality: 10,
+    },
+  };
+
+  const planTech = buildPlanFromUserIntake(techHeavyIntake, CLEAN_INITIAL_MASTER_PLAN.clarifyingQuestions);
+  const planStage = buildPlanFromUserIntake(stageHeavyIntake, CLEAN_INITIAL_MASTER_PLAN.clarifyingQuestions);
+
+  const techEstInTechPlan = planTech.budget.find((b) => b.category === 'Hackathon Wi-Fi, Power & Lab Setup')!.aiEstimateINR;
+  const stageEstInTechPlan = planTech.budget.find((b) => b.category === 'Stage, Sound & AV Rigging')!.aiEstimateINR;
+  assert.ok(techEstInTechPlan > stageEstInTechPlan);
+
+  const techEstInStagePlan = planStage.budget.find((b) => b.category === 'Hackathon Wi-Fi, Power & Lab Setup')!.aiEstimateINR;
+  const stageEstInStagePlan = planStage.budget.find((b) => b.category === 'Stage, Sound & AV Rigging')!.aiEstimateINR;
+  assert.ok(stageEstInStagePlan > techEstInStagePlan);
+
+  // Both plans respect caps
+  const metricsTech = computeDualTrackBudgetMetrics(planTech.budget, 500000);
+  const metricsStage = computeDualTrackBudgetMetrics(planStage.budget, 500000);
+  assert.ok(metricsTech.totalEffectiveSpendINR <= 500000);
+  assert.ok(metricsStage.totalEffectiveSpendINR <= 500000);
+  assert.ok(metricsTech.totalSponsorBackedINR <= 200000);
+  assert.ok(metricsStage.totalSponsorBackedINR <= 200000);
+});
+

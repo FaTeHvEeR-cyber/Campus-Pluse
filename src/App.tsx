@@ -37,6 +37,7 @@ import {
   buildSuggestedVendorQuotesFromIntake,
   buildTailoredClarifyingQuestionsFromIntake,
   computeDualTrackBudgetMetrics,
+  evaluateScheduleDependencies,
   formatINR,
   getCategoryBudgetItem,
   getEffectiveFestCategory,
@@ -330,13 +331,36 @@ export default function App() {
     scheduleId: string,
     nextStatus: TaskStatus
   ) => {
-    setMasterPlan((prev) => ({
-      ...prev,
-      schedule: prev.schedule.map((node) =>
-        node.id === scheduleId ? { ...node, status: nextStatus } : node
-      ),
-      lastUpdatedISO: new Date().toISOString(),
-    }));
+    setMasterPlan((prev) => {
+      if (nextStatus === 'Completed') {
+        const depAnalysis = evaluateScheduleDependencies(prev.schedule);
+        const unresolved =
+          depAnalysis.unresolvedDependenciesByNodeId[scheduleId] ?? [];
+        if (unresolved.length > 0) {
+          const prereqNames = unresolved
+            .map((p) => p.title || p.id)
+            .join(', ');
+          const blockerNote = `Blocked: Prerequisite milestone(s) not completed: ${prereqNames}. Complete prerequisites before clearing this milestone.`;
+          return {
+            ...prev,
+            schedule: prev.schedule.map((node) =>
+              node.id === scheduleId
+                ? { ...node, status: 'Blocked', blockerNote }
+                : node
+            ),
+            lastUpdatedISO: new Date().toISOString(),
+          };
+        }
+      }
+
+      return {
+        ...prev,
+        schedule: prev.schedule.map((node) =>
+          node.id === scheduleId ? { ...node, status: nextStatus } : node
+        ),
+        lastUpdatedISO: new Date().toISOString(),
+      };
+    });
   };
 
   const handleAddScheduleNode = (newNode: ScheduleNode) => {
@@ -639,7 +663,8 @@ export default function App() {
 
   const handleApplyTradeOff = (
     scenarioTitle: string,
-    option: CrisisTradeOffOption
+    option: CrisisTradeOffOption,
+    simulationResult?: CrisisSimulationResult
   ) => {
     setMasterPlan((prev) => {
       const basePlan =
@@ -652,7 +677,12 @@ export default function App() {
                 prev.clarifyingQuestions
               ),
             };
-      return applyCrisisTradeOffToPlan(basePlan, scenarioTitle, option);
+      return applyCrisisTradeOffToPlan(
+        basePlan,
+        scenarioTitle,
+        option,
+        simulationResult
+      );
     });
   };
 
@@ -769,7 +799,11 @@ export default function App() {
         ? ['- No schedule nodes generated yet.']
         : masterPlan.schedule.map(
             (s) =>
-              `- [${s.status}] ${s.code} (${s.phase.split(':')[0]}): ${s.title} | Venue: ${s.venue} | Squad: ${s.department}`
+              `- [${s.status}] ${s.code} (${s.phase.split(':')[0]}): ${s.title} | Venue: ${s.venue} | Squad: ${s.department} | Prereqs: ${
+                s.dependsOnIds && s.dependsOnIds.length > 0
+                  ? s.dependsOnIds.join(', ')
+                  : 'None (Root Milestone)'
+              }${s.blockerNote ? ` | Blocker: ${s.blockerNote}` : ''}`
           )),
       '',
       '## Dual-Track INR Budget Summary',
@@ -779,9 +813,53 @@ export default function App() {
             (b) =>
               `- ${b.category} (${b.priority}): AI Est ${formatINR(b.aiEstimateINR)} | Confirmed: ${
                 b.confirmedQuoteINR !== null
-                  ? formatINR(b.confirmedQuoteINR)
+                  ? `${formatINR(b.confirmedQuoteINR)} (Locked: ${b.lockedVendorName || 'Vendor'})`
                   : 'Pending Lock'
-              } (${b.quoteStatus})`
+              } (${b.quoteStatus}) | Sponsor Backed: ${formatINR(b.sponsorBackedINR)}`
+          )),
+      '',
+      '## Volunteer Tasks & Squad Assignments',
+      ...(masterPlan.volunteerTasks.length === 0
+        ? ['- No volunteer tasks assigned yet.']
+        : masterPlan.volunteerTasks.map(
+            (t) =>
+              `- [${t.status}] ${t.taskCode}: ${t.title} | Lead: ${t.coordinatorName} (${t.coordinatorRole || t.department}) | Crew: ${t.assignedVolunteersCount} volunteers | Track: ${t.venueTrack} | Window: ${t.deadlineWindow}${
+                t.bottleneckReason ? ` | Note: ${t.bottleneckReason}` : ''
+              }`
+          )),
+      '',
+      '## Coordinator Logs',
+      ...(masterPlan.coordinatorLogs.length === 0
+        ? ['- No coordinator logs posted yet.']
+        : masterPlan.coordinatorLogs.map(
+            (l) =>
+              `- [${l.timestamp}] ${l.author} (${l.squad}): ${l.note}`
+          )),
+      '',
+      '## Confirmed Vendor Quotes & Contract Locks',
+      ...(masterPlan.vendorQuotes.filter((q) =>
+        masterPlan.budget.some((b) => b.lockedVendorId === q.id)
+      ).length === 0
+        ? ['- No confirmed vendor quotes locked yet.']
+        : masterPlan.vendorQuotes
+            .filter((q) =>
+              masterPlan.budget.some((b) => b.lockedVendorId === q.id)
+            )
+            .map(
+              (q) =>
+                `- [Confirmed Lock] ${q.category}: ${q.vendorName} — ${formatINR(
+                  q.totalQuoteINR
+                )} (${
+                  q.gstIncluded ? 'GST Incl.' : 'Excl. GST'
+                }, ${q.advancePaymentPercent}% advance) | SLA: ${q.slaGuarantee}`
+            )),
+      '',
+      '## Applied Crisis Shock History',
+      ...(masterPlan.appliedShocks.length === 0
+        ? ['- No crisis constraint shocks applied yet.']
+        : masterPlan.appliedShocks.map(
+            (s) =>
+              `- [${s.timestamp}] ${s.scenarioTitle} -> Strategy: ${s.chosenStrategy} | Delta: ${formatINR(s.budgetDeltaINR, true)} | Schedule: ${s.scheduleNote} | Volunteer: ${s.volunteerNote}`
           )),
     ];
     return lines.join('\n');

@@ -2,7 +2,8 @@ import { GoogleGenAI, Type, type Schema } from '@google/genai';
 import type { Response } from 'express';
 import { ZodError } from 'zod';
 import { plannerRequestSchema, questionsSchema, synthesisSchema, evaluationsSchema,
-  budgetCategorySchema, taskStatusSchema, schedulePhaseSchema } from '../src/validation/plannerContracts';
+  budgetCategorySchema, taskStatusSchema, schedulePhaseSchema, summarySchema,
+  outreachSchema, crisisSchema } from '../src/validation/plannerContracts';
 
 interface PlannerRequest {
   method?: string;
@@ -187,8 +188,22 @@ export const EXECUTIVE_OPS_SUMMARY_SCHEMA: Schema = {
       items: {
         type: Type.OBJECT,
         properties: {
-          audience: { type: Type.STRING },
-          channel: { type: Type.STRING },
+          audience: {
+            type: Type.STRING,
+            enum: [
+              'Volunteer Leads',
+              "University Faculty Advisors / Dean's Office",
+              'Pending Vendors / Sponsors',
+            ],
+          },
+          channel: {
+            type: Type.STRING,
+            enum: [
+              'WhatsApp Squad Broadcast',
+              'Official Dean/Faculty Email',
+              'Vendor SLA Escalation',
+            ],
+          },
           subjectLine: { type: Type.STRING },
           messageBody: { type: Type.STRING },
         },
@@ -212,7 +227,14 @@ export const OUTREACH_DRAFT_SCHEMA: Schema = {
   properties: {
     recipientName: { type: Type.STRING },
     recipientRole: { type: Type.STRING },
-    channel: { type: Type.STRING },
+    channel: {
+      type: Type.STRING,
+      enum: [
+        'WhatsApp Squad Broadcast',
+        'Official Dean/Faculty Email',
+        'Vendor SLA Escalation',
+      ],
+    },
     subjectLine: { type: Type.STRING },
     messageBody: { type: Type.STRING },
     actionChecklist: {
@@ -238,7 +260,10 @@ export const CRISIS_SIMULATION_SCHEMA: Schema = {
     rippleAnalysis: { type: Type.STRING },
     impactedCategories: {
       type: Type.ARRAY,
-      items: { type: Type.STRING },
+      items: {
+        type: Type.STRING,
+        enum: budgetCategorySchema.options,
+      },
     },
     impactedVenueTracks: {
       type: Type.ARRAY,
@@ -261,7 +286,10 @@ export const CRISIS_SIMULATION_SCHEMA: Schema = {
           strategyTitle: { type: Type.STRING },
           summary: { type: Type.STRING },
           budgetDeltaINR: { type: Type.NUMBER },
-          targetBudgetCategory: { type: Type.STRING },
+          targetBudgetCategory: {
+            type: Type.STRING,
+            enum: budgetCategorySchema.options,
+          },
           scheduleAdjustment: { type: Type.STRING },
           affectedScheduleId: { type: Type.STRING },
           volunteerReallocation: { type: Type.STRING },
@@ -437,6 +465,26 @@ Cover these 4 categories in order: "Campus Permissions", "Multi-Track Room Clash
       action === 'generateOpsSummary'
     ) {
       const plan: FestMasterPlan = payload?.plan ?? INITIAL_FEST_MASTER_PLAN;
+
+      if (ai) {
+        try {
+          const response = await ai.models.generateContent({
+            model: MODEL_NAME,
+            contents: `Generate an executive operational summary for fest "${plan.intake.festName}" (${plan.intake.dates}, ₹${plan.intake.totalBudgetINR} budget, ${plan.intake.expectedFootfall} attendees). Current schedule milestones: ${plan.schedule.length}, budget items: ${plan.budget.length}, tasks: ${plan.volunteerTasks.length}, logs: ${plan.coordinatorLogs.length}. Synthesize readiness label, executive progress snapshot, headline bottleneck, critical risks, immediate next actions, and 3 broadcasts.`,
+            config: {
+              responseMimeType: 'application/json',
+              responseSchema: EXECUTIVE_OPS_SUMMARY_SCHEMA,
+            },
+          });
+          if (response.text) {
+            const parsed = summarySchema.parse(JSON.parse(response.text));
+            return res.json({ data: parsed, source: MODEL_NAME });
+          }
+        } catch {
+          // Fall through to deterministic engine
+        }
+      }
+
       const dynamicSummary = buildExecutiveOpsSummaryFromPlan(plan);
       return res.json({ data: dynamicSummary, source: 'deterministic' });
     }
@@ -453,6 +501,26 @@ Cover these 4 categories in order: "Campus Permissions", "Multi-Track Room Clash
         ...INITIAL_FEST_MASTER_PLAN.intake,
         festName,
       };
+
+      if (ai) {
+        try {
+          const response = await ai.models.generateContent({
+            model: MODEL_NAME,
+            contents: `Draft an urgent coordinator outreach message for "${intake.festName}" on ${intake.dates} at ${intake.eventLocality || 'Campus'}. Task Code: ${task.taskCode}, Title: "${task.title}", Lead: ${task.coordinatorName} (${task.coordinatorRole || task.department}), Status: ${task.status}, Assigned Crew: ${task.assignedVolunteersCount}, Window: ${task.deadlineWindow}, Bottleneck Note: ${task.bottleneckReason || 'Nominal'}. Generate channel, subjectLine, messageBody, and actionChecklist.`,
+            config: {
+              responseMimeType: 'application/json',
+              responseSchema: OUTREACH_DRAFT_SCHEMA,
+            },
+          });
+          if (response.text) {
+            const parsed = outreachSchema.parse(JSON.parse(response.text));
+            return res.json({ data: parsed, source: MODEL_NAME });
+          }
+        } catch {
+          // Fall through to deterministic engine
+        }
+      }
+
       const draft = buildCoordinatorOutreachFromTask(task, intake);
       return res.json({ data: draft, source: 'deterministic' });
     }
@@ -465,6 +533,25 @@ Cover these 4 categories in order: "Campus Permissions", "Multi-Track Room Clash
       const customPrompt: string | undefined =
         payload?.customShockDescription ?? payload?.customDescription;
       const plan: FestMasterPlan = payload?.plan ?? INITIAL_FEST_MASTER_PLAN;
+
+      if (ai) {
+        try {
+          const response = await ai.models.generateContent({
+            model: MODEL_NAME,
+            contents: `Simulate a real-time crisis constraint shock for "${plan.intake.festName}" (Scenario ID: "${scenarioId}", Custom Prompt: "${customPrompt || 'None'}"). Total budget: ₹${plan.intake.totalBudgetINR}, Footfall: ${plan.intake.expectedFootfall}, Venues: ${plan.intake.concurrentVenueTracks.join(', ')}. Return rippleAnalysis, impactedCategories, impactedVenueTracks, impactedSquads, beforeFootfall, afterFootfall, ProjectedUnmitigatedOverrunINR, and exactly 3 concrete trade-off options.`,
+            config: {
+              responseMimeType: 'application/json',
+              responseSchema: CRISIS_SIMULATION_SCHEMA,
+            },
+          });
+          if (response.text) {
+            const parsed = crisisSchema.parse(JSON.parse(response.text));
+            return res.json({ data: parsed, source: MODEL_NAME });
+          }
+        } catch {
+          // Fall through to deterministic engine
+        }
+      }
 
       const dynamicResult = buildCrisisSimulationFromIntake(
         scenarioId,

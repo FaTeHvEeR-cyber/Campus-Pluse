@@ -70,6 +70,12 @@ export const ScheduleBudgetWorkspace: React.FC<ScheduleBudgetWorkspaceProps> = (
   );
   const [newOwner, setNewOwner] = useState('Event Lead');
 
+  const defaultPrereqId =
+    plan.schedule.find((n) => n.tier === 'Critical-Path Approval')?.id ??
+    plan.schedule[0]?.id ??
+    '';
+  const [selectedPrereqId, setSelectedPrereqId] = useState<string>('');
+
   const budgetMetrics = computeDualTrackBudgetMetrics(
     plan.budget,
     plan.intake.totalBudgetINR,
@@ -99,6 +105,14 @@ export const ScheduleBudgetWorkspace: React.FC<ScheduleBudgetWorkspaceProps> = (
       ? `CP-0${depAnalysis.criticalPathNodes.length + 1}`
       : `OPS-0${depAnalysis.downstreamNodes.length + 1}`;
 
+    const effectivePrereqId =
+      selectedPrereqId !== ''
+        ? selectedPrereqId
+        : isPhase1
+          ? ''
+          : defaultPrereqId;
+    const dependsOnIds = effectivePrereqId ? [effectivePrereqId] : [];
+
     const newNode: ScheduleNode = {
       id: `sched-custom-${Date.now()}`,
       code: nextCode,
@@ -114,7 +128,7 @@ export const ScheduleBudgetWorkspace: React.FC<ScheduleBudgetWorkspaceProps> = (
       department: isPhase1
         ? ('Core Executive' as DepartmentName)
         : ('Technical & Lab Ops' as DepartmentName),
-      dependsOnIds: isPhase1 ? [] : ['sched-cp-1'],
+      dependsOnIds,
       status: 'In-Progress',
       blockedIfDelayedWarning:
         'Delays downstream track readiness and volunteer shift handoff.',
@@ -122,6 +136,7 @@ export const ScheduleBudgetWorkspace: React.FC<ScheduleBudgetWorkspaceProps> = (
 
     onAddScheduleNode(newNode);
     setNewTitle('');
+    setSelectedPrereqId('');
     setShowAddMilestoneForm(false);
   };
 
@@ -331,7 +346,7 @@ export const ScheduleBudgetWorkspace: React.FC<ScheduleBudgetWorkspaceProps> = (
               Cancel
             </button>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
             <input
               type="text"
               required
@@ -350,6 +365,25 @@ export const ScheduleBudgetWorkspace: React.FC<ScheduleBudgetWorkspaceProps> = (
               {SCHEDULE_PHASES.map((phase) => (
                 <option key={phase} value={phase}>
                   {phase.split(':')[0]}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label="Prerequisite milestone dependency"
+              value={
+                selectedPrereqId ||
+                (newPhase ===
+                'Phase 1: University Approvals, Venue Lock & Core Sponsor MoUs'
+                  ? ''
+                  : defaultPrereqId)
+              }
+              onChange={(e) => setSelectedPrereqId(e.target.value)}
+              className="px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg"
+            >
+              <option value="">Prereq: None (Root)</option>
+              {plan.schedule.map((node) => (
+                <option key={node.id} value={node.id}>
+                  Prereq: {node.code} · {node.title.slice(0, 24)}
                 </option>
               ))}
             </select>

@@ -196,7 +196,24 @@ export function evaluateScheduleDependencies(
     const unresolved: ScheduleNode[] = [];
     for (const depId of node.dependsOnIds) {
       const parent = byId.get(depId);
-      if (parent && parent.status !== 'Completed') {
+      if (!parent) {
+        unresolved.push({
+          id: depId,
+          code: 'MISSING',
+          title: `Unresolved Missing Prerequisite (${depId})`,
+          track: node.track,
+          phase: node.phase,
+          tier: 'Critical-Path Approval',
+          daySlot: node.daySlot,
+          venue: node.venue,
+          ownerCoordinator: 'Unassigned',
+          department: node.department,
+          dependsOnIds: [],
+          status: 'Blocked',
+          blockedIfDelayedWarning: `Prerequisite milestone ${depId} does not exist in the schedule.`,
+          blockerNote: `Prerequisite node ${depId} is missing.`,
+        });
+      } else if (parent.status !== 'Completed') {
         unresolved.push(parent);
       }
     }
@@ -319,23 +336,66 @@ export function lockVendorQuoteInPlan(
 export function applyCrisisTradeOffToPlan(
   plan: FestMasterPlan,
   scenarioTitle: string,
-  option: CrisisTradeOffOption
+  option: CrisisTradeOffOption,
+  simulationResult?: CrisisSimulationResult
 ): FestMasterPlan {
+  // Enforce idempotency: if shock already applied, return plan unchanged
+  if (
+    plan.appliedShocks.some(
+      (s) =>
+        s.id === option.id ||
+        s.chosenStrategy === `${option.optionLabel} — ${option.strategyTitle}`
+    )
+  ) {
+    return plan;
+  }
+
+  // Handle footfall updates for registration surges
+  let nextFootfall = plan.intake.expectedFootfall;
+  if (
+    simulationResult &&
+    simulationResult.afterFootfall &&
+    simulationResult.afterFootfall !== plan.intake.expectedFootfall
+  ) {
+    nextFootfall = simulationResult.afterFootfall;
+  } else if (
+    /surge/i.test(scenarioTitle) ||
+    /surge/i.test(option.strategyTitle) ||
+    /surge/i.test(option.summary)
+  ) {
+    const surgeMatch =
+      scenarioTitle.match(/\+(\d+)/) || option.summary.match(/\+(\d+)/);
+    if (surgeMatch && surgeMatch[1]) {
+      nextFootfall = plan.intake.expectedFootfall + parseInt(surgeMatch[1], 10);
+    }
+  }
+
+  const nextIntake =
+    nextFootfall !== plan.intake.expectedFootfall
+      ? { ...plan.intake, expectedFootfall: nextFootfall }
+      : plan.intake;
+
   const updatedBudget = plan.budget.map((item) => {
     if (item.category !== option.targetBudgetCategory) return item;
 
+    // Confirmed vendor quote immutability: NEVER mutate confirmedQuoteINR, lockedVendorId, or lockedVendorName
     if (
-      item.quoteStatus === 'Confirmed Quote' &&
+      item.quoteStatus === 'Confirmed Quote' ||
       item.confirmedQuoteINR !== null
     ) {
-      const nextConfirmed = Math.max(
+      const nextEstimate = Math.max(
         0,
-        item.confirmedQuoteINR + option.budgetDeltaINR
+        item.aiEstimateINR + option.budgetDeltaINR
       );
       return {
         ...item,
-        confirmedQuoteINR: nextConfirmed,
-        notes: `[Crisis Re-Plan: ${option.strategyTitle}] ${item.notes}`,
+        aiEstimateINR: nextEstimate,
+        notes: `[Crisis Scope Delta: ${formatINR(
+          option.budgetDeltaINR,
+          true
+        )} (${option.strategyTitle}) - Vendor quote remains locked at ${formatINR(
+          item.confirmedQuoteINR ?? 0
+        )}] ${item.notes}`,
       };
     }
 
@@ -352,26 +412,62 @@ export function applyCrisisTradeOffToPlan(
 
   const updatedSchedule = plan.schedule.map((node) => {
     if (node.id !== option.affectedScheduleId) return node;
+
+    let nextVenue = node.venue;
+    let nextDaySlot = node.daySlot;
+
+    const venueMatch = option.scheduleAdjustment.match(
+      /(?:to|in|at)\s+([A-Za-z0-9\s–-]+?(?:Hall|Venue|Lawn|Auditorium|Block|Courtyard|Bay)[A-Za-z0-9\s]*)/i
+    );
+    if (venueMatch && venueMatch[1]) {
+      nextVenue = venueMatch[1].trim();
+    }
+
+    if (
+      /shift|extend|delay|stagger|timing|slot|advance/i.test(
+        option.scheduleAdjustment
+      )
+    ) {
+      nextDaySlot = `${node.daySlot} (${option.scheduleAdjustment
+        .slice(0, 35)
+        .trim()})`;
+    }
+
     return {
       ...node,
       status:
         node.status === 'Blocked' ? ('In-Progress' as TaskStatus) : node.status,
+      venue: nextVenue,
+      daySlot: nextDaySlot,
       blockerNote: option.scheduleAdjustment,
     };
   });
 
   const updatedTasks = plan.volunteerTasks.map((task) => {
     if (task.id !== option.affectedTaskId) return task;
+
+    let nextCount = task.assignedVolunteersCount;
+    const countMatch = option.volunteerReallocation.match(
+      /(\d+)\s+(?:volunteers|coordinators|ushers|marshals|wiremen|stewards)/i
+    );
+    if (countMatch && countMatch[1]) {
+      const parsedCount = parseInt(countMatch[1], 10);
+      if (parsedCount > 0) {
+        nextCount = task.assignedVolunteersCount + parsedCount;
+      }
+    }
+
     return {
       ...task,
       status:
         task.status === 'Blocked' ? ('In-Progress' as TaskStatus) : task.status,
+      assignedVolunteersCount: nextCount,
       bottleneckReason: `Mitigated via ${option.optionLabel}: ${option.volunteerReallocation}`,
     };
   });
 
   const shockEntry: AppliedShockLog = {
-    id: `shock-${Date.now()}`,
+    id: option.id,
     timestamp: new Date().toLocaleTimeString('en-IN', {
       hour: '2-digit',
       minute: '2-digit',
@@ -385,6 +481,7 @@ export function applyCrisisTradeOffToPlan(
 
   return {
     ...plan,
+    intake: nextIntake,
     budget: updatedBudget,
     schedule: updatedSchedule,
     volunteerTasks: updatedTasks,
@@ -432,18 +529,31 @@ export function computeTradeOffBudgetPreview(
     expectedFootfall
   );
   const targetItem = getCategoryBudgetItem(budget, option.targetBudgetCategory);
+  const isConfirmed =
+    targetItem != null &&
+    (targetItem.quoteStatus === 'Confirmed Quote' ||
+      targetItem.confirmedQuoteINR !== null);
+
   const currentCategoryAllocationINR = targetItem
-    ? targetItem.quoteStatus === 'Confirmed Quote' &&
-      targetItem.confirmedQuoteINR !== null
-      ? targetItem.confirmedQuoteINR
+    ? isConfirmed
+      ? targetItem.confirmedQuoteINR!
       : targetItem.aiEstimateINR
     : 0;
 
-  const projectedCategoryAllocationINR = targetItem ? Math.max(
-    0, currentCategoryAllocationINR + option.budgetDeltaINR
-  ) : 0;
+  // For confirmed quotes, quote amount remains immutable so effective spend delta is 0
+  const appliedDelta =
+    targetItem && !isConfirmed
+      ? Math.max(0, targetItem.aiEstimateINR + option.budgetDeltaINR) -
+        targetItem.aiEstimateINR
+      : 0;
+
+  const projectedCategoryAllocationINR = targetItem
+    ? isConfirmed
+      ? currentCategoryAllocationINR
+      : Math.max(0, currentCategoryAllocationINR + option.budgetDeltaINR)
+    : 0;
+
   const currentTotalSpendINR = metrics.totalEffectiveSpendINR;
-  const appliedDelta = targetItem ? projectedCategoryAllocationINR - currentCategoryAllocationINR : 0;
   const projectedTotalSpendINR = currentTotalSpendINR + appliedDelta;
   const currentBufferINR = metrics.remainingMasterBufferINR;
   const projectedBufferINR = masterCapINR - projectedTotalSpendINR;
@@ -712,11 +822,64 @@ export function buildPlanFromUserIntake(
     },
   ];
 
-  // Allocate ~94% of totalBudget across 6 categories, leaving ~6% contingency buffer
-  const allocatable = totalBudget * 0.94;
+  // Reserve ~10% for Prize Pool & Contingency Buffer, allocating remainder by priority weights
+  const contingencyINR = round500(totalBudget * 0.1);
+  const allocatable = Math.max(0, totalBudget - contingencyINR);
   const customNoteSuffix = customNotes
     ? ` · Custom Brief: ${customNotes.slice(0, 80)}`
     : '';
+
+  const weights = intake.priorityWeights || {
+    techInfraWifi: 80,
+    stageAvProduction: 80,
+    foodNightRefreshments: 80,
+    prizesSwag: 80,
+    guestJudgeHospitality: 80,
+  };
+  const wStage = Math.max(1, weights.stageAvProduction || 1);
+  const wTech = Math.max(1, weights.techInfraWifi || 1);
+  const wFood = Math.max(1, weights.foodNightRefreshments || 1);
+  const wSwag = Math.max(1, weights.prizesSwag || 1);
+  const wJudge = Math.max(1, weights.guestJudgeHospitality || 1);
+  const totalWeight = wStage + wTech + wFood + wSwag + wJudge;
+
+  let estStage = round500((wStage / totalWeight) * allocatable);
+  let estTech = round500((wTech / totalWeight) * allocatable);
+  let estFood = round500((wFood / totalWeight) * allocatable);
+  let estSwag = round500((wSwag / totalWeight) * allocatable);
+  let estJudge = round500((wJudge / totalWeight) * allocatable);
+
+  // Guarantee total spend strictly <= totalBudget
+  const totalEstSpend =
+    estStage + estTech + estFood + estSwag + estJudge + contingencyINR;
+  if (totalEstSpend > totalBudget) {
+    const diff = totalEstSpend - totalBudget;
+    estFood = Math.max(0, estFood - diff);
+  }
+
+  // Sponsor allocation strictly <= intake.sponsorTargetINR
+  const sponsorTarget = Math.max(0, intake.sponsorTargetINR || 0);
+  let spStage = Math.min(estStage, round500(sponsorTarget * 0.2));
+  let spTech = Math.min(estTech, round500(sponsorTarget * 0.15));
+  let spFood = Math.min(estFood, round500(sponsorTarget * 0.25));
+  let spSwag = Math.min(estSwag, round500(sponsorTarget * 0.1));
+  let spJudge = Math.min(estJudge, round500(sponsorTarget * 0.1));
+  let spPrize = Math.min(contingencyINR, round500(sponsorTarget * 0.2));
+  const sumSponsor = spStage + spTech + spFood + spSwag + spJudge + spPrize;
+  if (sumSponsor > sponsorTarget && sumSponsor > 0) {
+    const scale = sponsorTarget / sumSponsor;
+    spStage = round500(spStage * scale);
+    spTech = round500(spTech * scale);
+    spFood = round500(spFood * scale);
+    spSwag = round500(spSwag * scale);
+    spJudge = round500(spJudge * scale);
+    spPrize = round500(spPrize * scale);
+    const currentSponsor =
+      spStage + spTech + spFood + spSwag + spJudge + spPrize;
+    if (currentSponsor > sponsorTarget) {
+      spPrize = Math.max(0, spPrize - (currentSponsor - sponsorTarget));
+    }
+  }
 
   const budget: BudgetLineItem[] = [
     {
@@ -725,10 +888,10 @@ export function buildPlanFromUserIntake(
       itemTitle: `Audio, Projection & Stage Setup at ${mainVenue} (${locality})`,
       track: mainTrack,
       priority: 'Must-Have',
-      aiEstimateINR: round500(allocatable * 0.22),
+      aiEstimateINR: estStage,
       confirmedQuoteINR: null,
       quoteStatus: 'AI Estimate',
-      sponsorBackedINR: round500(intake.sponsorTargetINR * 0.2),
+      sponsorBackedINR: spStage,
       notes: `Estimated for ${venueType} (${startTime} – ${endTime})${customNoteSuffix}.`,
     },
     {
@@ -737,10 +900,10 @@ export function buildPlanFromUserIntake(
       itemTitle: `Wi-Fi Access Points, Extension Boards & Power Backup (${secondVenue})`,
       track: mainTrack,
       priority: 'Must-Have',
-      aiEstimateINR: round500(allocatable * 0.18),
+      aiEstimateINR: estTech,
       confirmedQuoteINR: null,
       quoteStatus: 'AI Estimate',
-      sponsorBackedINR: round500(intake.sponsorTargetINR * 0.15),
+      sponsorBackedINR: spTech,
       notes: `Sized for ${intake.expectedFootfall} participants.`,
     },
     {
@@ -749,10 +912,10 @@ export function buildPlanFromUserIntake(
       itemTitle: `Participant Meals, Water & Refreshments (${intake.expectedFootfall} Pax in ${locality})`,
       track: mainTrack,
       priority: 'Must-Have',
-      aiEstimateINR: round500(allocatable * 0.26),
+      aiEstimateINR: estFood,
       confirmedQuoteINR: null,
       quoteStatus: 'AI Estimate',
-      sponsorBackedINR: round500(intake.sponsorTargetINR * 0.25),
+      sponsorBackedINR: spFood,
       notes: `Covers ${startTime} – ${endTime}${
         intake.overnightStayRequired ? ' + overnight refreshments' : ''
       }${customNoteSuffix}.`,
@@ -763,10 +926,10 @@ export function buildPlanFromUserIntake(
       itemTitle: `Lanyards, Badges, Standees & Certificates (${intake.expectedFootfall} Attendees)`,
       track: mainTrack,
       priority: 'Flexible',
-      aiEstimateINR: round500(allocatable * 0.11),
+      aiEstimateINR: estSwag,
       confirmedQuoteINR: null,
       quoteStatus: 'AI Estimate',
-      sponsorBackedINR: round500(intake.sponsorTargetINR * 0.1),
+      sponsorBackedINR: spSwag,
       notes: 'Includes venue directional signage and registration passes.',
     },
     {
@@ -775,10 +938,10 @@ export function buildPlanFromUserIntake(
       itemTitle: `Guest Speakers, Security & Venue Support at ${locality}`,
       track: mainTrack,
       priority: 'Flexible',
-      aiEstimateINR: round500(allocatable * 0.09),
+      aiEstimateINR: estJudge,
       confirmedQuoteINR: null,
       quoteStatus: 'AI Estimate',
-      sponsorBackedINR: round500(intake.sponsorTargetINR * 0.1),
+      sponsorBackedINR: spJudge,
       notes: `Security & guest desk for ${venueType}${customNoteSuffix}.`,
     },
     {
@@ -787,10 +950,10 @@ export function buildPlanFromUserIntake(
       itemTitle: `Event Prizes, Awards & Emergency Reserve`,
       track: mainTrack,
       priority: 'Must-Have',
-      aiEstimateINR: round500(allocatable * 0.14),
+      aiEstimateINR: contingencyINR,
       confirmedQuoteINR: null,
       quoteStatus: 'AI Estimate',
-      sponsorBackedINR: round500(intake.sponsorTargetINR * 0.2),
+      sponsorBackedINR: spPrize,
       notes: `Allocated for ${categoryLabel}${customNoteSuffix}.`,
     },
   ];
@@ -1024,6 +1187,43 @@ export function buildSuggestedVendorQuotesFromIntake(
   ];
 }
 
+function findAffectedScheduleId(
+  schedule: ScheduleNode[] | undefined,
+  keyword?: string,
+  fallbackId = 'sched-ops-1'
+): string {
+  if (!schedule || schedule.length === 0) return fallbackId;
+  if (keyword) {
+    const lower = keyword.toLowerCase();
+    const match = schedule.find(
+      (s) =>
+        s.department.toLowerCase().includes(lower) ||
+        s.title.toLowerCase().includes(lower) ||
+        s.track.toLowerCase().includes(lower)
+    );
+    if (match) return match.id;
+  }
+  return schedule[0].id;
+}
+
+function findAffectedTaskId(
+  tasks: VolunteerTask[] | undefined,
+  keyword?: string,
+  fallbackId = 'vt-1'
+): string {
+  if (!tasks || tasks.length === 0) return fallbackId;
+  if (keyword) {
+    const lower = keyword.toLowerCase();
+    const match = tasks.find(
+      (t) =>
+        t.department.toLowerCase().includes(lower) ||
+        t.title.toLowerCase().includes(lower)
+    );
+    if (match) return match.id;
+  }
+  return tasks[0].id;
+}
+
 export function buildCrisisSimulationFromIntake(
   scenarioId: string,
   plan: FestMasterPlan,
@@ -1071,7 +1271,9 @@ export function buildCrisisSimulationFromIntake(
           budgetDeltaINR: moderateCost,
           targetBudgetCategory: 'Catering, Stalls & Midnight Refreshments',
           scheduleAdjustment: `Adjust ${mainVenue} transition slot by 20 mins`,
+          affectedScheduleId: findAffectedScheduleId(plan.schedule, 'Stage', 'sched-ops-1'),
           volunteerReallocation: `Assign 4 coordinators from ${secondVenue} to ${mainVenue}`,
+          affectedTaskId: findAffectedTaskId(plan.volunteerTasks, 'Logistics', 'vt-4'),
           riskTradeOff: 'Minimal schedule shift; keeps master budget healthy.',
           recommended: true,
         },
@@ -1083,7 +1285,9 @@ export function buildCrisisSimulationFromIntake(
           budgetDeltaINR: 0,
           targetBudgetCategory: 'Stage, Sound & AV Rigging',
           scheduleAdjustment: `Stagger tracks within ${startTime}–${endTime}`,
+          affectedScheduleId: findAffectedScheduleId(plan.schedule, 'Stage', 'sched-ops-1'),
           volunteerReallocation: 'Rotate existing squad leads across checkpoints',
+          affectedTaskId: findAffectedTaskId(plan.volunteerTasks, 'Stage', 'vt-2'),
           riskTradeOff: 'Tighter turnaround between sessions, zero budget hit.',
         },
         {
@@ -1094,7 +1298,9 @@ export function buildCrisisSimulationFromIntake(
           budgetDeltaINR: highCost,
           targetBudgetCategory: 'Stage, Sound & AV Rigging',
           scheduleAdjustment: 'Zero schedule delay',
+          affectedScheduleId: findAffectedScheduleId(plan.schedule, 'AV', 'sched-ops-1'),
           volunteerReallocation: '2 volunteers assigned to vendor gate entry',
+          affectedTaskId: findAffectedTaskId(plan.volunteerTasks, 'Registration', 'vt-1'),
           riskTradeOff: `High cost (${formatINR(highCost, true)}) eating into contingency buffer.`,
         },
       ],
@@ -1128,7 +1334,9 @@ export function buildCrisisSimulationFromIntake(
           budgetDeltaINR: savingsCost,
           targetBudgetCategory: 'Swag, IDs, Certificates & Printing',
           scheduleAdjustment: 'Lock AV & Catering advance on schedule',
+          affectedScheduleId: findAffectedScheduleId(plan.schedule, 'Sponsor', 'sched-ops-1'),
           volunteerReallocation: 'Finance squad issues digital QR passes',
+          affectedTaskId: findAffectedTaskId(plan.volunteerTasks, 'Sponsor', 'vt-3'),
           riskTradeOff: 'Digital certificates instead of printed folders; saves cash.',
           recommended: true,
         },
@@ -1140,7 +1348,9 @@ export function buildCrisisSimulationFromIntake(
           budgetDeltaINR: moderateCost,
           targetBudgetCategory: 'Stage, Sound & AV Rigging',
           scheduleAdjustment: `Sign split-payment addendum before ${startTime}`,
+          affectedScheduleId: findAffectedScheduleId(plan.schedule, 'Vendor', 'sched-ops-1'),
           volunteerReallocation: '2 Finance leads coordinate vendor MoU',
+          affectedTaskId: findAffectedTaskId(plan.volunteerTasks, 'Executive', 'vt-1'),
           riskTradeOff: `Modest ${formatINR(moderateCost, true)} fee; preserves full scope.`,
         },
         {
@@ -1151,14 +1361,19 @@ export function buildCrisisSimulationFromIntake(
           budgetDeltaINR: highCost,
           targetBudgetCategory: 'Stage, Sound & AV Rigging',
           scheduleAdjustment: 'Requires re-doing soundcheck slot',
+          affectedScheduleId: findAffectedScheduleId(plan.schedule, 'AV', 'sched-ops-1'),
           volunteerReallocation: 'Stage squad supervises new vendor load-in',
+          affectedTaskId: findAffectedTaskId(plan.volunteerTasks, 'Stage', 'vt-2'),
           riskTradeOff: `High cost (${formatINR(highCost, true)}).`,
         },
       ],
     };
   }
 
-  if (scenarioId === 'crisis-venue-clash') {
+  if (
+    scenarioId === 'crisis-venue-clash' ||
+    scenarioId === 'crisis-auditorium-clash'
+  ) {
     return {
       scenarioId,
       scenarioTitle: `Venue Timing Clash at ${mainVenue} (${locality}) During ${startTime}–${endTime}`,
@@ -1178,7 +1393,9 @@ export function buildCrisisSimulationFromIntake(
           budgetDeltaINR: 0,
           targetBudgetCategory: 'Stage, Sound & AV Rigging',
           scheduleAdjustment: `Shift 3-hour block to ${secondVenue}`,
+          affectedScheduleId: findAffectedScheduleId(plan.schedule, 'Stage', 'sched-ops-5'),
           volunteerReallocation: `Deploy 4 ushers to guide attendees between ${mainVenue} & ${secondVenue}`,
+          affectedTaskId: findAffectedTaskId(plan.volunteerTasks, 'Stage', 'vt-2'),
           riskTradeOff: 'Zero extra cost; requires clear signage.',
           recommended: true,
         },
@@ -1190,7 +1407,9 @@ export function buildCrisisSimulationFromIntake(
           budgetDeltaINR: moderateCost,
           targetBudgetCategory: 'Stage, Sound & AV Rigging',
           scheduleAdjustment: '1-hour setup before doors open',
+          affectedScheduleId: findAffectedScheduleId(plan.schedule, 'Tech', 'sched-ops-2'),
           volunteerReallocation: '2 Tech volunteers manage stream relay',
+          affectedTaskId: findAffectedTaskId(plan.volunteerTasks, 'Tech', 'vt-4'),
           riskTradeOff: `Draws ${formatINR(moderateCost)} from buffer.`,
         },
         {
@@ -1201,8 +1420,77 @@ export function buildCrisisSimulationFromIntake(
           budgetDeltaINR: highCost,
           targetBudgetCategory: 'Stage, Sound & AV Rigging',
           scheduleAdjustment: 'Add 30-min transit buffer',
+          affectedScheduleId: findAffectedScheduleId(plan.schedule, 'Core', 'sched-cp-1'),
           volunteerReallocation: '6 volunteers manage external venue desk',
+          affectedTaskId: findAffectedTaskId(plan.volunteerTasks, 'Registration', 'vt-1'),
           riskTradeOff: `High cost (${formatINR(highCost, true)}).`,
+        },
+      ],
+    };
+  }
+
+  if (scenarioId === 'crisis-volunteer-dropout') {
+    const dropoutVolunteers = Math.max(
+      4,
+      Math.round(intake.activeVolunteerCoordinators * 0.25)
+    );
+    return {
+      scenarioId,
+      scenarioTitle: `Volunteer Crunch: ${dropoutVolunteers} Core Volunteers & Stage Lead Unavailable Due to Exam Rescheduling`,
+      rippleAnalysis: `An emergency lab exam scheduled during ${startTime}–${endTime} pulls ${dropoutVolunteers} core volunteers and stage leads from "${intake.festName}" at ${mainVenue} (${locality}), threatening stage cueing and room ops${customNoteContext}.`,
+      impactedCategories: [
+        'Hackathon Wi-Fi, Power & Lab Setup',
+        'Judge Travel, Security & Hospitality',
+      ],
+      impactedVenueTracks: [mainVenue, secondVenue],
+      impactedSquads: [
+        'Technical & Lab Ops',
+        'Stage & PR Squad',
+        'Registration & Hospitality Desk',
+      ],
+      beforeFootfall: intake.expectedFootfall,
+      afterFootfall: intake.expectedFootfall,
+      ProjectedUnmitigatedOverrunINR: moderateCost,
+      options: [
+        {
+          id: 'opt-vol-a',
+          optionLabel: 'Strategy A · Cross-Squad Shift Rotation + Vendor Wiremen (Recommended)',
+          strategyTitle: `Rotate PR/Registration Squad to Stage Ops + Hire 2 Certified Wiremen`,
+          summary: `Once morning registration at ${mainVenue} stabilizes, rotate 3 Registration volunteers to Stage Ops and contract 2 professional wiremen (${formatINR(moderateCost)}) for setup.`,
+          budgetDeltaINR: moderateCost,
+          targetBudgetCategory: 'Hackathon Wi-Fi, Power & Lab Setup',
+          scheduleAdjustment: `OPS stage check completed on schedule by certified vendor`,
+          affectedScheduleId: findAffectedScheduleId(plan.schedule, 'Stage', 'sched-ops-2'),
+          volunteerReallocation: `Reassign 3 registration desk coordinators to stage queue marshaling`,
+          affectedTaskId: findAffectedTaskId(plan.volunteerTasks, 'Stage', 'vt-7'),
+          riskTradeOff: 'Minor vendor labor add-on; completely eliminates student electrical hazard.',
+          recommended: true,
+        },
+        {
+          id: 'opt-vol-b',
+          optionLabel: 'Strategy B · Staggered Duty-Leave Viva Slots with ₹0 Budget Impact',
+          strategyTitle: `Issue DSW Duty-Leave Memo for First-Batch 30-Min Viva`,
+          summary: `Coordinate with department chairs so affected volunteers take an early 30-minute viva and return to fest duty with zero budget spend.`,
+          budgetDeltaINR: 0,
+          targetBudgetCategory: 'Judge Travel, Security & Hospitality',
+          scheduleAdjustment: `Shift track weigh-in & stage mic test by 30 mins`,
+          affectedScheduleId: findAffectedScheduleId(plan.schedule, 'Robotics', 'sched-ops-4'),
+          volunteerReallocation: `Core Executive coordinates faculty duty-leave approvals`,
+          affectedTaskId: findAffectedTaskId(plan.volunteerTasks, 'Executive', 'vt-1'),
+          riskTradeOff: 'Temporary 45-minute staffing dip during morning check-in.',
+        },
+        {
+          id: 'opt-vol-c',
+          optionLabel: 'Strategy C · Emergency External Stewards Package',
+          strategyTitle: `Contract 4 Professional Event Marshals for Main Stage Gate`,
+          summary: `Hire 4 licensed external stewards in ${locality} to manage hall entries and stage security during ${startTime}–${endTime}.`,
+          budgetDeltaINR: highCost,
+          targetBudgetCategory: 'Judge Travel, Security & Hospitality',
+          scheduleAdjustment: `Zero schedule delay; external crew assumes door control`,
+          affectedScheduleId: findAffectedScheduleId(plan.schedule, 'Stage', 'sched-ops-2'),
+          volunteerReallocation: `Remaining volunteers focus 100% on participant hospitality`,
+          affectedTaskId: findAffectedTaskId(plan.volunteerTasks, 'Logistics', 'vt-4'),
+          riskTradeOff: `High spend (${formatINR(highCost, true)}) against contingency buffer.`,
         },
       ],
     };
@@ -1236,7 +1524,9 @@ export function buildCrisisSimulationFromIntake(
         budgetDeltaINR: moderateCost,
         targetBudgetCategory: 'Catering, Stalls & Midnight Refreshments',
         scheduleAdjustment: `Stagger lunch batch at ${mainVenue} & ${secondVenue}`,
+        affectedScheduleId: findAffectedScheduleId(plan.schedule, 'Catering', 'sched-ops-2'),
         volunteerReallocation: `Shift 3 volunteers to ${secondVenue} check-in desk`,
+        affectedTaskId: findAffectedTaskId(plan.volunteerTasks, 'Food', 'vt-4'),
         riskTradeOff: 'Keeps total spend safely within contingency buffer.',
         recommended: true,
       },
@@ -1248,7 +1538,9 @@ export function buildCrisisSimulationFromIntake(
         budgetDeltaINR: 0,
         targetBudgetCategory: 'Hackathon Wi-Fi, Power & Lab Setup',
         scheduleAdjustment: `Keep ${startTime}–${endTime} schedule unchanged`,
+        affectedScheduleId: findAffectedScheduleId(plan.schedule, 'Tech', 'sched-ops-2'),
         volunteerReallocation: '2 Registration leads manage digital QR queue',
+        affectedTaskId: findAffectedTaskId(plan.volunteerTasks, 'Registration', 'vt-3'),
         riskTradeOff: 'Zero extra spend; spot registrants do not receive meal kits.',
       },
       {
@@ -1259,7 +1551,9 @@ export function buildCrisisSimulationFromIntake(
         budgetDeltaINR: highCost,
         targetBudgetCategory: 'Catering, Stalls & Midnight Refreshments',
         scheduleAdjustment: 'Extend catering window by 30 mins',
+        affectedScheduleId: findAffectedScheduleId(plan.schedule, 'Catering', 'sched-ops-3'),
         volunteerReallocation: '4 Logistics volunteers handle extra kits',
+        affectedTaskId: findAffectedTaskId(plan.volunteerTasks, 'Food', 'vt-4'),
         riskTradeOff: `High spend (${formatINR(highCost, true)}) reducing buffer.`,
       },
     ],

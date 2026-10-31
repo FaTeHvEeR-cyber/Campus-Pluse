@@ -36,7 +36,11 @@ interface CrisisSimulatorWorkspaceProps {
   isSimulating: boolean;
   onSelectScenario: (scenarioId: string) => void;
   onSimulateCustomShock: (customShockDescription: string) => void;
-  onApplyTradeOff: (scenarioTitle: string, option: CrisisTradeOffOption) => void;
+  onApplyTradeOff: (
+    scenarioTitle: string,
+    option: CrisisTradeOffOption,
+    simulationResult?: CrisisSimulationResult
+  ) => void;
   onPredictFromIntake: () => void;
   onLoadSampleCrisis: () => void;
   onClearCrisis: () => void;
@@ -121,7 +125,7 @@ export const CrisisSimulatorWorkspace: React.FC<
   const handleApplyOption = (option: CrisisTradeOffOption) => {
     if (!simulationResult) return;
     setSelectedOptionId(option.id);
-    onApplyTradeOff(simulationResult.scenarioTitle, option);
+    onApplyTradeOff(simulationResult.scenarioTitle, option, simulationResult);
     setRecentlyAppliedOptionId(option.id);
     setTimeout(() => setRecentlyAppliedOptionId(null), 3500);
   };
