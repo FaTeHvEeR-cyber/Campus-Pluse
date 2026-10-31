@@ -65,7 +65,7 @@ export const ScheduleBudgetWorkspace: React.FC<ScheduleBudgetWorkspaceProps> = (
   const [newDaySlot, setNewDaySlot] = useState(
     `${plan.intake.dates} · ${plan.intake.startTime ?? '09:00 AM'}`
   );
-  const [newVenue, setNewVenue] = useState(
+  const [newVenue] = useState(
     plan.intake.concurrentVenueTracks[0] ?? 'Main Auditorium'
   );
   const [newOwner, setNewOwner] = useState('Event Lead');
@@ -470,15 +470,16 @@ export const ScheduleBudgetWorkspace: React.FC<ScheduleBudgetWorkspaceProps> = (
 
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
+                <caption className="sr-only">Budget estimates and confirmed vendor quotes in Indian rupees</caption>
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-600">
-                    <th className="py-3 px-4">Budget Category &amp; Scope</th>
-                    <th className="py-3 px-4">Priority</th>
-                    <th className="py-3 px-4">Quote Status</th>
-                    <th className="py-3 px-4 text-right">AI Estimate (₹)</th>
-                    <th className="py-3 px-4 text-right">Confirmed Quote (₹)</th>
-                    <th className="py-3 px-4 text-right">Per-Attendee</th>
-                    <th className="py-3 px-4 text-right">Vendor Action</th>
+                    <th scope="col" className="py-3 px-4">Budget Category &amp; Scope</th>
+                    <th scope="col" className="py-3 px-4">Priority</th>
+                    <th scope="col" className="py-3 px-4">Quote Status</th>
+                    <th scope="col" className="py-3 px-4 text-right">AI Estimate (₹)</th>
+                    <th scope="col" className="py-3 px-4 text-right">Confirmed Quote (₹)</th>
+                    <th scope="col" className="py-3 px-4 text-right">Per-Attendee</th>
+                    <th scope="col" className="py-3 px-4 text-right">Vendor Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 text-xs">
@@ -609,6 +610,7 @@ export const ScheduleBudgetWorkspace: React.FC<ScheduleBudgetWorkspaceProps> = (
                 <button
                   type="button"
                   onClick={() => setSelectedPhaseFilter('ALL')}
+                  aria-pressed={selectedPhaseFilter === 'ALL'}
                   className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                     selectedPhaseFilter === 'ALL'
                       ? 'bg-slate-900 text-white'
@@ -622,6 +624,7 @@ export const ScheduleBudgetWorkspace: React.FC<ScheduleBudgetWorkspaceProps> = (
                     key={phase}
                     type="button"
                     onClick={() => setSelectedPhaseFilter(phase)}
+                    aria-pressed={selectedPhaseFilter === phase}
                     className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                       selectedPhaseFilter === phase
                         ? 'bg-slate-900 text-white'

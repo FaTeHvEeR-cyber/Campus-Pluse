@@ -62,7 +62,7 @@ export const QuoteComparatorWorkspace: React.FC<
   const [actionBanner, setActionBanner] = useState<string | null>(null);
   const [vendorName, setVendorName] = useState('');
   const [totalQuoteINR, setTotalQuoteINR] = useState(98000);
-  const [advancePercent, setAdvancePercent] = useState(40);
+  const [advancePercent] = useState(40);
   const [inclusionsText, setInclusionsText] = useState(
     'Full institutional delivery, GST invoice & 2 on-site supervisors'
   );
@@ -251,7 +251,7 @@ export const QuoteComparatorWorkspace: React.FC<
       <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-5">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 pb-4 border-b border-slate-100">
           <div
-            role="tablist"
+            role="group"
             aria-label="Select procurement category to compare quotes"
             className="flex items-center gap-1.5 flex-wrap"
           >
@@ -263,8 +263,7 @@ export const QuoteComparatorWorkspace: React.FC<
               return (
                 <button
                   key={category}
-                  role="tab"
-                  aria-selected={isSelected}
+                  aria-pressed={isSelected}
                   type="button"
                   onClick={() => onSelectCategory(category)}
                   className={`px-3.5 py-2 text-xs font-semibold rounded-lg border transition-colors flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer ${

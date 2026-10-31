@@ -572,7 +572,6 @@ export const CrisisSimulatorWorkspace: React.FC<
                 <article
                   key={option.id}
                   aria-label={option.optionLabel}
-                  onClick={() => setSelectedOptionId(option.id)}
                   className={`rounded-xl border p-5 flex flex-col justify-between gap-5 transition-colors cursor-pointer ${
                     isPreviewSelected
                       ? 'border-indigo-600 bg-indigo-50/15 ring-1 ring-indigo-600'
@@ -673,6 +672,11 @@ export const CrisisSimulatorWorkspace: React.FC<
                   </div>
 
                   <div className="space-y-2">
+                    <button type="button" onClick={() => setSelectedOptionId(option.id)}
+                      aria-pressed={isPreviewSelected}
+                      className="w-full rounded-lg border border-indigo-600 p-2 text-xs font-semibold text-indigo-700">
+                      Preview {option.strategyTitle}
+                    </button>
                     <button
                       type="button"
                       onClick={(e) => {
@@ -682,7 +686,7 @@ export const CrisisSimulatorWorkspace: React.FC<
                       aria-label={`Apply Selected Trade-Off to Master Plan: ${option.optionLabel}`}
                       className={`w-full py-2.5 px-4 text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer ${
                         isApplied
-                          ? 'bg-emerald-600 text-white'
+                          ? 'bg-emerald-700 text-white'
                           : isPreviewSelected
                             ? 'bg-indigo-600 text-white hover:bg-indigo-700'
                             : 'bg-slate-900 text-white hover:bg-slate-800'
@@ -757,7 +761,7 @@ export const CrisisSimulatorWorkspace: React.FC<
                   >
                     {formatINR(shock.budgetDeltaINR, true)}
                   </span>
-                  <div className="text-slate-400">{shock.timestamp}</div>
+                  <div className="text-slate-600">{shock.timestamp}</div>
                 </div>
               </div>
             ))}

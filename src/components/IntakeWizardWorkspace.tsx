@@ -166,7 +166,7 @@ export const IntakeWizardWorkspace: React.FC<IntakeWizardWorkspaceProps> = ({
     await onRegenerateQuestions();
     const effectiveCategory = getEffectiveFestCategory(intake);
     setQuestionsRefreshedBanner(
-      `Refreshed 4 Clarifying Questions with Gemini 3.8 Flash for "${intake.festName || 'Custom Event'}" (${effectiveCategory} · ${intake.venueType || 'College Campus'} at ${intake.eventLocality || 'Campus'} · ${intake.startTime || '09:00 AM'}–${intake.endTime || '06:00 PM'} · ${formatINR(intake.totalBudgetINR)}).`
+      `Refreshed 4 Clarifying Questions with the planner for "${intake.festName || 'Custom Event'}" (${effectiveCategory} · ${intake.venueType || 'College Campus'} at ${intake.eventLocality || 'Campus'} · ${intake.startTime || '09:00 AM'}–${intake.endTime || '06:00 PM'} · ${formatINR(intake.totalBudgetINR)}).`
     );
   };
 
@@ -660,7 +660,7 @@ export const IntakeWizardWorkspace: React.FC<IntakeWizardWorkspaceProps> = ({
                     className="flex items-center justify-between px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-md text-slate-800"
                   >
                     <span className="truncate pr-2">
-                      <span className="font-mono text-slate-400 mr-1.5">
+                      <span className="font-mono text-slate-600 mr-1.5">
                         V{idx + 1}.
                       </span>
                       {venue}
@@ -745,7 +745,7 @@ export const IntakeWizardWorkspace: React.FC<IntakeWizardWorkspaceProps> = ({
                   }`}
                 />
                 {isGeneratingQuestions
-                  ? 'Analyzing Fest Brief with Gemini 3.8 Flash...'
+                  ? 'Analyzing Fest Brief with the planner...'
                   : 'Analyze Fest Brief & Refresh Questions'}
               </button>
             </div>
@@ -770,7 +770,7 @@ export const IntakeWizardWorkspace: React.FC<IntakeWizardWorkspaceProps> = ({
             </div>
             <div className="text-xs font-mono text-emerald-700 flex items-center gap-1.5 shrink-0">
               <ShieldCheck className="w-4 h-4" />
-              <span>Gemini 3.8 Flash Schema</span>
+              <span>Structured planning</span>
             </div>
           </div>
 
@@ -835,6 +835,7 @@ export const IntakeWizardWorkspace: React.FC<IntakeWizardWorkspaceProps> = ({
                           key={optionText}
                           type="button"
                           onClick={() => onUpdateQuestionAnswer(q.id, optionText)}
+                          aria-pressed={isSelected}
                           className={`px-2.5 py-1 text-xs rounded-md border text-left transition-colors cursor-pointer ${
                             isSelected
                               ? 'bg-slate-900 text-white border-slate-900 font-medium'
@@ -884,8 +885,7 @@ export const IntakeWizardWorkspace: React.FC<IntakeWizardWorkspaceProps> = ({
 
               <p className="text-xs text-slate-600 leading-relaxed">
                 Share any extra clarifications, custom constraints, dietary
-                rules, sponsor clauses, or equipment requirements. Gemini 3.8
-                Flash uses this context directly when refreshing questions,
+                rules, sponsor clauses, or equipment requirements. The planner uses this context directly when refreshing questions,
                 allocating your INR budget, predicting crisis trade-offs, and
                 evaluating vendor quotes.
               </p>

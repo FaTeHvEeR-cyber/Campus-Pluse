@@ -137,7 +137,7 @@ export const VolunteerOpsWorkspace: React.FC<VolunteerOpsWorkspaceProps> = ({
   );
   const [newCustomDepartment, setNewCustomDepartment] = useState('');
   const [newVolunteerCount, setNewVolunteerCount] = useState(4);
-  const [newDeadline, setNewDeadline] = useState(
+  const [newDeadline] = useState(
     plan.intake.startTime ? `Before ${plan.intake.startTime}` : 'Day 1 · 09:00 AM'
   );
 
@@ -913,6 +913,7 @@ export const VolunteerOpsWorkspace: React.FC<VolunteerOpsWorkspaceProps> = ({
                         key={status}
                         type="button"
                         onClick={() => setStatusFilter(status)}
+                        aria-pressed={statusFilter === status}
                         className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                           statusFilter === status
                             ? 'bg-white text-slate-900 shadow-xs'

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
   Download,
@@ -45,13 +45,14 @@ import {
 import {
   evaluateVendorQuotes,
   generateClarifyingQuestions,
+  generateMasterFestPlan,
   simulateConstraintShock,
 } from './services/geminiService';
-import { IntakeWizardWorkspace } from './components/IntakeWizardWorkspace';
-import { ScheduleBudgetWorkspace } from './components/ScheduleBudgetWorkspace';
-import { VolunteerOpsWorkspace } from './components/VolunteerOpsWorkspace';
-import { CrisisSimulatorWorkspace } from './components/CrisisSimulatorWorkspace';
-import { QuoteComparatorWorkspace } from './components/QuoteComparatorWorkspace';
+const IntakeWizardWorkspace = lazy(() => import('./components/IntakeWizardWorkspace').then(m => ({ default: m.IntakeWizardWorkspace })));
+const ScheduleBudgetWorkspace = lazy(() => import('./components/ScheduleBudgetWorkspace').then(m => ({ default: m.ScheduleBudgetWorkspace })));
+const VolunteerOpsWorkspace = lazy(() => import('./components/VolunteerOpsWorkspace').then(m => ({ default: m.VolunteerOpsWorkspace })));
+const CrisisSimulatorWorkspace = lazy(() => import('./components/CrisisSimulatorWorkspace').then(m => ({ default: m.CrisisSimulatorWorkspace })));
+const QuoteComparatorWorkspace = lazy(() => import('./components/QuoteComparatorWorkspace').then(m => ({ default: m.QuoteComparatorWorkspace })));
 
 const WORKSPACE_TABS: { id: WorkspaceId; label: string }[] = [
   { id: 'intake', label: 'Intake Wizard' },
@@ -111,6 +112,16 @@ export default function App() {
     'markdown'
   );
   const [copiedRunbook, setCopiedRunbook] = useState(false);
+  const runbookDialog = useRef<HTMLDialogElement>(null);
+  const generationRequest = useRef(0);
+
+  useEffect(() => {
+    if (!showRunbookModal) return;
+    const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = runbookDialog.current;
+    dialog?.showModal();
+    return () => { dialog?.close(); returnFocus?.focus(); };
+  }, [showRunbookModal]);
 
   useEffect(() => {
     document.body.setAttribute('data-workspace', activeWorkspace);
@@ -120,16 +131,14 @@ export default function App() {
     e: React.KeyboardEvent<HTMLButtonElement>,
     index: number
   ) => {
-    if (e.key === 'ArrowRight') {
-      e.preventDefault();
-      const nextIndex = (index + 1) % WORKSPACE_TABS.length;
-      setActiveWorkspace(WORKSPACE_TABS[nextIndex].id);
-    } else if (e.key === 'ArrowLeft') {
-      e.preventDefault();
-      const prevIndex =
-        (index - 1 + WORKSPACE_TABS.length) % WORKSPACE_TABS.length;
-      setActiveWorkspace(WORKSPACE_TABS[prevIndex].id);
-    }
+    const nextIndex = e.key === 'ArrowRight' ? (index + 1) % WORKSPACE_TABS.length
+      : e.key === 'ArrowLeft' ? (index - 1 + WORKSPACE_TABS.length) % WORKSPACE_TABS.length
+      : e.key === 'Home' ? 0 : e.key === 'End' ? WORKSPACE_TABS.length - 1 : null;
+    if (nextIndex === null) return;
+    e.preventDefault();
+    const next = WORKSPACE_TABS[nextIndex];
+    setActiveWorkspace(next.id);
+    document.getElementById(`tab-${next.id}`)?.focus();
   };
 
   // Module 1 Handlers (Intake Wizard)
@@ -225,11 +234,8 @@ export default function App() {
       const questions: ClarifyingQuestion[] =
         await generateClarifyingQuestions(currentIntake);
       if (Array.isArray(questions) && questions.length > 0) {
-        setMasterPlan((prev) => ({
-          ...prev,
-          clarifyingQuestions: questions,
-          lastUpdatedISO: new Date().toISOString(),
-        }));
+        setMasterPlan((prev) => prev.intake !== currentIntake || prev.clarifyingQuestions !== immediateTailored
+          ? prev : { ...prev, clarifyingQuestions: questions, lastUpdatedISO: new Date().toISOString() });
       }
     } finally {
       setIsGeneratingQuestions(false);
@@ -237,36 +243,43 @@ export default function App() {
   };
 
   const handleSynthesizeMasterPlan = async () => {
+    const requestId = ++generationRequest.current;
+    setIsSynthesizingPlan(true);
     const currentIntake = masterPlan.intake;
     const currentQuestions = masterPlan.clarifyingQuestions;
     const intakeDriven = buildPlanFromUserIntake(
       currentIntake,
       currentQuestions
     );
-    const suggestedQuotes = buildSuggestedVendorQuotesFromIntake(
-      currentIntake,
-      intakeDriven.budget
-    );
+    try {
+      const generated = await generateMasterFestPlan(currentIntake, currentQuestions);
+      if (generationRequest.current !== requestId) return;
+      const suggestedQuotes = buildSuggestedVendorQuotesFromIntake(currentIntake, generated.budget);
 
-    const nextPlan: FestMasterPlan = {
-      ...masterPlan,
-      schedule: intakeDriven.schedule,
-      budget: intakeDriven.budget,
+    setMasterPlan((prev) => {
+      if (prev.intake !== currentIntake || prev.clarifyingQuestions !== currentQuestions ||
+          prev.schedule !== masterPlan.schedule || prev.budget !== masterPlan.budget) return prev;
+      return {
+      ...prev,
+      schedule: generated.schedule,
+      budget: generated.budget,
       volunteerTasks:
-        masterPlan.volunteerTasks.length > 0
-          ? masterPlan.volunteerTasks
-          : intakeDriven.volunteerTasks,
+        prev.volunteerTasks.length > 0
+          ? prev.volunteerTasks
+          : intakeDriven.volunteerTasks.map(task => ({ ...task,
+              linkedScheduleId: generated.schedule.find(node => node.department === task.department)?.id,
+            })),
       vendorQuotes:
-        masterPlan.vendorQuotes.length > 0
-          ? masterPlan.vendorQuotes
+        prev.vendorQuotes.length > 0
+          ? prev.vendorQuotes
           : suggestedQuotes,
       lastUpdatedISO: new Date().toISOString(),
     };
-    setMasterPlan(nextPlan);
-    if (opsSummary) {
-      setOpsSummary(buildExecutiveOpsSummaryFromPlan(nextPlan));
-    }
+    });
     setActiveWorkspace('schedule-budget');
+    } finally {
+      if (generationRequest.current === requestId) setIsSynthesizingPlan(false);
+    }
   };
 
   // Module 2 Handlers (Schedule & Budget)
@@ -737,11 +750,9 @@ export default function App() {
     }
   };
 
-  const budgetMetrics = computeDualTrackBudgetMetrics(
-    masterPlan.budget,
-    masterPlan.intake.totalBudgetINR,
-    masterPlan.intake.expectedFootfall
-  );
+  const budgetMetrics = useMemo(() => computeDualTrackBudgetMetrics(
+    masterPlan.budget, masterPlan.intake.totalBudgetINR, masterPlan.intake.expectedFootfall
+  ), [masterPlan.budget, masterPlan.intake.totalBudgetINR, masterPlan.intake.expectedFootfall]);
 
   const generateRunbookOutput = () => {
     if (exportFormat === 'json') {
@@ -787,6 +798,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:p-3">Skip to main content</a>
       {/* Strict 3-Zone Top Bar Contract */}
       <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200 px-6 py-3.5">
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-8">
@@ -804,10 +816,10 @@ export default function App() {
 
           {/* Zone 2: 5 concise single-line navigation links */}
           <nav
-            role="tablist"
             aria-label="CampusPulse AI Execution Workspaces"
             className="flex items-center gap-5 overflow-x-auto py-0.5"
           >
+            <div role="tablist" aria-label="Execution workspaces" className="flex items-center gap-5">
             {WORKSPACE_TABS.map((tab, index) => {
               const isActive = activeWorkspace === tab.id;
               return (
@@ -815,6 +827,7 @@ export default function App() {
                   key={tab.id}
                   role="tab"
                   aria-selected={isActive}
+                  tabIndex={isActive ? 0 : -1}
                   aria-controls={`panel-${tab.id}`}
                   id={`tab-${tab.id}`}
                   type="button"
@@ -830,6 +843,7 @@ export default function App() {
                 </button>
               );
             })}
+            </div>
           </nav>
 
           {/* Zone 3: 1 primary action */}
@@ -891,12 +905,10 @@ export default function App() {
       </div>
 
       {/* Main Viewport Landmark */}
-      <main
-        id={`panel-${activeWorkspace}`}
-        role="tabpanel"
-        aria-labelledby={`tab-${activeWorkspace}`}
-        className="flex-1 max-w-7xl w-full mx-auto px-6 py-8"
-      >
+      <main id="main-content" tabIndex={-1} className="flex-1 max-w-7xl w-full mx-auto px-6 py-8">
+        <div id={`panel-${activeWorkspace}`} role="tabpanel" tabIndex={0}
+          aria-labelledby={`tab-${activeWorkspace}`}>
+        <Suspense fallback={<p role="status">Loading workspace…</p>}>
         {activeWorkspace === 'intake' && (
           <IntakeWizardWorkspace
             intake={masterPlan.intake}
@@ -975,6 +987,8 @@ export default function App() {
             onClearVendorQuotes={handleClearVendorQuotes}
           />
         )}
+        </Suspense>
+        </div>
       </main>
 
       {/* Quiet Semantic Footer */}
@@ -995,11 +1009,9 @@ export default function App() {
 
       {/* Runbook Export Dialog (JSON & Printable Markdown) */}
       {showRunbookModal && (
-        <div
-          role="dialog"
-          aria-modal="true"
+        <dialog ref={runbookDialog} onCancel={() => setShowRunbookModal(false)}
           aria-labelledby="runbook-modal-title"
-          className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4"
+          className="m-auto max-w-2xl w-[calc(100%-2rem)] max-h-[90vh] overflow-y-auto rounded-xl p-0 backdrop:bg-slate-900/60"
         >
           <div className="bg-white border border-slate-200 rounded-xl max-w-2xl w-full p-6 space-y-4 shadow-xl">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -1026,6 +1038,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setExportFormat('markdown')}
+                aria-pressed={exportFormat === 'markdown'}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-md cursor-pointer ${
                   exportFormat === 'markdown'
                     ? 'bg-slate-900 text-white'
@@ -1037,6 +1050,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setExportFormat('json')}
+                aria-pressed={exportFormat === 'json'}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-md cursor-pointer ${
                   exportFormat === 'json'
                     ? 'bg-slate-900 text-white'
@@ -1079,7 +1093,7 @@ export default function App() {
               </button>
             </div>
           </div>
-        </div>
+        </dialog>
       )}
     </div>
   );

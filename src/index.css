@@ -21,3 +21,8 @@
     font-variant-numeric: tabular-nums;
   }
 }
+
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 3px solid #4338ca;
+  outline-offset: 3px;
+}

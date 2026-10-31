@@ -51,7 +51,7 @@ export function sanitizeNumericInput(rawValue: string): {
     return { displayValue: '', numericValue: 0 };
   }
   const parsed = Number.parseInt(digitsOnly, 10);
-  if (Number.isNaN(parsed) || parsed <= 0) {
+  if ( !Number.isSafeInteger(parsed) || parsed <= 0) {
     return { displayValue: '', numericValue: 0 };
   }
   return { displayValue: String(parsed), numericValue: parsed };
@@ -153,7 +153,7 @@ export function computeExecutionReadinessScore(
     ...schedule.map((s) => s.status),
     ...volunteerTasks.map((t) => t.status),
   ];
-  if (allStatuses.length === 0) return 100;
+  if (allStatuses.length === 0) return 0;
 
   let weightedPoints = 0;
   for (const st of allStatuses) {
@@ -209,7 +209,7 @@ export function evaluateScheduleDependencies(
   const criticalPathCompletionPercent =
     criticalPathNodes.length > 0
       ? Math.round((completedCritical / criticalPathNodes.length) * 100)
-      : 100;
+      : 0;
 
   return {
     criticalPathNodes,
@@ -439,12 +439,12 @@ export function computeTradeOffBudgetPreview(
       : targetItem.aiEstimateINR
     : 0;
 
-  const projectedCategoryAllocationINR = Math.max(
-    0,
-    currentCategoryAllocationINR + option.budgetDeltaINR
-  );
+  const projectedCategoryAllocationINR = targetItem ? Math.max(
+    0, currentCategoryAllocationINR + option.budgetDeltaINR
+  ) : 0;
   const currentTotalSpendINR = metrics.totalEffectiveSpendINR;
-  const projectedTotalSpendINR = currentTotalSpendINR + option.budgetDeltaINR;
+  const appliedDelta = targetItem ? projectedCategoryAllocationINR - currentCategoryAllocationINR : 0;
+  const projectedTotalSpendINR = currentTotalSpendINR + appliedDelta;
   const currentBufferINR = metrics.remainingMasterBufferINR;
   const projectedBufferINR = masterCapINR - projectedTotalSpendINR;
 
@@ -602,8 +602,8 @@ export function buildPlanFromUserIntake(
     intake.concurrentVenueTracks[0] || intake.primaryVenues || 'Main Venue Hall';
   const secondVenue = intake.concurrentVenueTracks[1] || mainVenue;
   const mainTrack = intake.tracks[0] || categoryLabel;
-  const totalBudget = Math.max(10000, intake.totalBudgetINR);
-  const round500 = (n: number) => Math.max(500, Math.round(n / 500) * 500);
+  const totalBudget = Math.max(5000, intake.totalBudgetINR);
+  const round500 = (n: number) => Math.max(0, Math.floor(n / 500) * 500);
   const customNotes = intake.additionalContextNotes?.trim() || '';
 
   const approvalAuthority =
@@ -613,10 +613,10 @@ export function buildPlanFromUserIntake(
         ? 'Convention Center Facility Manager & Local Fire NOC'
         : 'Local Municipal Ground Authority & Sound Permit Cell';
 
-  const permissionAnswer = clarifyingQuestions[0]?.answer?.trim();
-  const clashAnswer = clarifyingQuestions[1]?.answer?.trim();
-  const sponsorAnswer = clarifyingQuestions[2]?.answer?.trim();
-  const logisticsAnswer = clarifyingQuestions[3]?.answer?.trim();
+  const permissionAnswer = clarifyingQuestions.find(q => q.category === 'Campus Permissions')?.answer.trim();
+  const clashAnswer = clarifyingQuestions.find(q => q.category === 'Multi-Track Room Clashes')?.answer.trim();
+  const sponsorAnswer = clarifyingQuestions.find(q => q.category === 'Sponsor Timelines')?.answer.trim();
+  const logisticsAnswer = clarifyingQuestions.find(q => q.category === 'Overnight Logistics')?.answer.trim();
 
   const schedule: ScheduleNode[] = [
     {
@@ -1367,16 +1367,15 @@ export function buildExecutiveOpsSummaryFromPlan(
       : mainVenue;
   const customNotes = intake.additionalContextNotes?.trim() || '';
 
-  const fallbackGenerated = buildPlanFromUserIntake(
-    intake,
-    plan.clarifyingQuestions
-  );
+  const fallbackGenerated = plan.volunteerTasks.length === 0 || plan.budget.length === 0
+    ? buildPlanFromUserIntake(intake, plan.clarifyingQuestions)
+    : null;
   const effectiveTasks =
     plan.volunteerTasks.length > 0
       ? plan.volunteerTasks
-      : fallbackGenerated.volunteerTasks;
+      : fallbackGenerated?.volunteerTasks ?? [];
   const effectiveBudget =
-    plan.budget.length > 0 ? plan.budget : fallbackGenerated.budget;
+    plan.budget.length > 0 ? plan.budget : fallbackGenerated?.budget ?? [];
   const budgetMetrics = computeDualTrackBudgetMetrics(
     effectiveBudget,
     intake.totalBudgetINR,

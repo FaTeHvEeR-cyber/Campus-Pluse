@@ -14,6 +14,7 @@ import {
   computeExecutionReadinessScore,
   computeTradeOffBudgetPreview,
   computeVolunteerOpsMetrics,
+  cycleTaskStatus,
   evaluateScheduleDependencies,
   formatINR,
   formatNumericInputValue,
@@ -27,6 +28,88 @@ import {
   DETERMINISTIC_CRISIS_RESULTS,
   INITIAL_FEST_MASTER_PLAN,
 } from '../data/seedFestData';
+
+test('empty plans do not report execution readiness or cleared approvals', () => {
+  assert.equal(computeExecutionReadinessScore([], []), 0);
+  assert.equal(evaluateScheduleDependencies([]).criticalPathCompletionPercent, 0);
+});
+
+test('numeric inputs reject overflow and unsafe integers', () => {
+  assert.equal(sanitizeNumericInput('9'.repeat(400)).numericValue, 0);
+  assert.equal(sanitizeNumericInput('9007199254740993').numericValue, 0);
+});
+
+test('the minimum supported budget is respected and zero sponsorship stays zero', () => {
+  for (const totalBudgetINR of [5000, 5001, 9999, 10000, 150000]) {
+    const generated = buildPlanFromUserIntake({ ...CLEAN_INITIAL_MASTER_PLAN.intake,
+      totalBudgetINR, sponsorTargetINR: 0 }, CLEAN_INITIAL_MASTER_PLAN.clarifyingQuestions);
+    const metrics = computeDualTrackBudgetMetrics(generated.budget, totalBudgetINR);
+    assert.ok(metrics.totalEffectiveSpendINR <= totalBudgetINR);
+    assert.equal(metrics.totalSponsorBackedINR, 0);
+  }
+});
+
+test('trade-off preview matches clamped savings actually applied without mutating input', () => {
+  const plan = structuredClone(INITIAL_FEST_MASTER_PLAN);
+  const snapshot = structuredClone(plan);
+  const option = { ...DETERMINISTIC_CRISIS_RESULTS['crisis-reg-surge'].options[0], budgetDeltaINR: -1_000_000 };
+  const preview = computeTradeOffBudgetPreview(plan.budget, plan.intake.totalBudgetINR, plan.intake.expectedFootfall, option);
+  const updated = applyCrisisTradeOffToPlan(plan, 'Regression scenario', option);
+  const actual = computeDualTrackBudgetMetrics(updated.budget, plan.intake.totalBudgetINR, plan.intake.expectedFootfall);
+  assert.equal(preview.projectedTotalSpendINR, actual.totalEffectiveSpendINR);
+  assert.equal(preview.projectedBufferINR, actual.remainingMasterBufferINR);
+  assert.deepEqual(plan, snapshot);
+});
+
+test('preview does not spend money when the target category is missing', () => {
+  const option = DETERMINISTIC_CRISIS_RESULTS['crisis-reg-surge'].options[0];
+  const preview = computeTradeOffBudgetPreview([], 5000, 20, option);
+  assert.equal(preview.projectedTotalSpendINR, 0);
+  assert.equal(preview.projectedCategoryAllocationINR, 0);
+});
+
+test('locking an unknown quote is an immutable no-op', () => {
+  assert.equal(lockVendorQuoteInPlan(INITIAL_FEST_MASTER_PLAN, 'unknown-quote'), INITIAL_FEST_MASTER_PLAN);
+});
+
+test('status progression supports pending, blocked, active and completed work', () => {
+  assert.equal(cycleTaskStatus('Pending'), 'In-Progress');
+  assert.equal(cycleTaskStatus('Blocked'), 'In-Progress');
+  assert.equal(cycleTaskStatus('In-Progress'), 'Completed');
+  assert.equal(cycleTaskStatus('Completed'), 'Pending');
+});
+
+test('sponsor and venue shocks preserve attendance and offer three different choices', () => {
+  for (const scenarioId of ['crisis-sponsor-delay', 'crisis-venue-clash']) {
+    const result = buildCrisisSimulationFromIntake(scenarioId, CLEAN_INITIAL_MASTER_PLAN);
+    assert.equal(result.scenarioId, scenarioId);
+    assert.equal(result.beforeFootfall, result.afterFootfall);
+    assert.equal(new Set(result.options.map(option => option.id)).size, 3);
+    assert.equal(result.options.filter(option => option.recommended).length, 1);
+  }
+});
+
+test('overrun and tight buffers are distinguished from healthy allocations', () => {
+  const budget = [{ ...INITIAL_FEST_MASTER_PLAN.budget[0], aiEstimateINR: 9800,
+    confirmedQuoteINR: null, quoteStatus: 'AI Estimate' as const }];
+  assert.equal(computeDualTrackBudgetMetrics(budget, 10000).budgetHealthStatus, 'Tight Allocation');
+  assert.equal(computeDualTrackBudgetMetrics(budget, 5000).budgetHealthStatus, 'Overrun Risk');
+  assert.equal(computeDualTrackBudgetMetrics(budget, 20000).budgetHealthStatus, 'Nominal Buffer');
+});
+
+test('outreach distinguishes completed work from urgent blocked work', () => {
+  const task = INITIAL_FEST_MASTER_PLAN.volunteerTasks[0];
+  const completed = buildCoordinatorOutreachFromTask({ ...task, status: 'Completed' }, CLEAN_INITIAL_MASTER_PLAN.intake);
+  const blocked = buildCoordinatorOutreachFromTask({ ...task, status: 'Blocked', bottleneckReason: 'Access denied' }, CLEAN_INITIAL_MASTER_PLAN.intake);
+  assert.ok(completed.messageBody.includes('Confirmed completed'));
+  assert.ok(blocked.messageBody.includes('Access denied'));
+});
+
+test('clarifying answers retain their meaning when the model changes question order', () => {
+  const intake = CLEAN_INITIAL_MASTER_PLAN.intake;
+  const questions = buildTailoredClarifyingQuestionsFromIntake(intake);
+  assert.deepEqual(buildPlanFromUserIntake(intake, [...questions].reverse()), buildPlanFromUserIntake(intake, questions));
+});
 
 test('formatINR formats Indian currency with commas and sign prefixes', () => {
   assert.equal(formatINR(450000), '₹4,50,000');

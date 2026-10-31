@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import express from 'express';
+import express, { type ErrorRequestHandler } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
@@ -12,9 +12,19 @@ async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
-  app.use(express.json({ limit: '2mb' }));
+  app.disable('x-powered-by');
+  app.use(express.json({ limit: '128kb' }));
 
-  app.post('/api/planner', handlePlannerApiRequest);
+  app.all('/api/planner', (req, res, next) => {
+    void handlePlannerApiRequest(req, res).catch(next);
+  });
+  const requestErrorHandler: ErrorRequestHandler = (error: unknown, _req, res, _next) => {
+    const status = typeof error === 'object' && error !== null && 'status' in error ? error.status : 500;
+    res.status(status === 413 ? 413 : status === 400 ? 400 : 500).json({
+      error: status === 413 ? 'Request body is too large' : status === 400 ? 'Invalid JSON body' : 'Unable to process request',
+    });
+  };
+  app.use(requestErrorHandler);
 
   app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok', service: 'CampusPulse AI Execution Engine' });
@@ -39,4 +49,7 @@ async function startServer() {
   });
 }
 
-startServer();
+void startServer().catch(() => {
+  console.error('Unable to start CampusPulse server');
+  process.exitCode = 1;
+});

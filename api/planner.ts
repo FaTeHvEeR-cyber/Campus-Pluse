@@ -1,12 +1,19 @@
-import { GoogleGenAI, Type, Schema } from '@google/genai';
-import type { Request, Response } from 'express';
+import { GoogleGenAI, Type, type Schema } from '@google/genai';
+import type { Response } from 'express';
+import { ZodError } from 'zod';
+import { plannerRequestSchema, questionsSchema, synthesisSchema, evaluationsSchema,
+  budgetCategorySchema, taskStatusSchema, schedulePhaseSchema } from '../src/validation/plannerContracts';
+
+interface PlannerRequest {
+  method?: string;
+  body?: unknown;
+  headers: Record<string, string | string[] | undefined>;
+}
+type PlannerResponse = Pick<Response, 'status' | 'json' | 'setHeader' | 'end'>;
 import {
   ClarifyingQuestion,
-  CrisisSimulationResult,
-  ExecutiveOpsSummary,
   FestIntakeConfig,
   FestMasterPlan,
-  OutreachDraft,
   VendorQuote,
   VolunteerTask,
 } from '../src/types';
@@ -23,13 +30,15 @@ import {
 const MODEL_NAME = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
 function getServerGenAI(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY' || apiKey.trim() === '') {
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY' || apiKey === 'your_google_ai_studio_api_key_here' || apiKey.trim() === '') {
     return null;
   }
   return new GoogleGenAI({
     apiKey,
     httpOptions: {
+      timeout: 18_000,
+      retryOptions: { attempts: 1 },
       headers: {
         'User-Agent': 'aistudio-build',
       },
@@ -83,8 +92,8 @@ export const MASTER_PLAN_SYNTHESIS_SCHEMA: Schema = {
           code: { type: Type.STRING },
           title: { type: Type.STRING },
           track: { type: Type.STRING },
-          phase: { type: Type.STRING },
-          tier: { type: Type.STRING },
+          phase: { type: Type.STRING, enum: schedulePhaseSchema.options },
+          tier: { type: Type.STRING, enum: ['Critical-Path Approval', 'Downstream Vendor/Volunteer'] },
           daySlot: { type: Type.STRING },
           venue: { type: Type.STRING },
           ownerCoordinator: { type: Type.STRING },
@@ -93,7 +102,7 @@ export const MASTER_PLAN_SYNTHESIS_SCHEMA: Schema = {
             type: Type.ARRAY,
             items: { type: Type.STRING },
           },
-          status: { type: Type.STRING },
+          status: { type: Type.STRING, enum: taskStatusSchema.options },
           blockedIfDelayedWarning: { type: Type.STRING },
           blockerNote: { type: Type.STRING },
         },
@@ -120,13 +129,13 @@ export const MASTER_PLAN_SYNTHESIS_SCHEMA: Schema = {
         type: Type.OBJECT,
         properties: {
           id: { type: Type.STRING },
-          category: { type: Type.STRING },
+          category: { type: Type.STRING, enum: budgetCategorySchema.options },
           itemTitle: { type: Type.STRING },
           track: { type: Type.STRING },
-          priority: { type: Type.STRING },
+          priority: { type: Type.STRING, enum: ['Must-Have', 'Flexible', 'Nice-to-Have'] },
           aiEstimateINR: { type: Type.NUMBER },
           confirmedQuoteINR: { type: Type.NUMBER, nullable: true },
-          quoteStatus: { type: Type.STRING },
+          quoteStatus: { type: Type.STRING, enum: ['AI Estimate'] },
           lockedVendorName: { type: Type.STRING },
           sponsorBackedINR: { type: Type.NUMBER },
           notes: { type: Type.STRING },
@@ -138,6 +147,7 @@ export const MASTER_PLAN_SYNTHESIS_SCHEMA: Schema = {
           'track',
           'priority',
           'aiEstimateINR',
+          'confirmedQuoteINR',
           'quoteStatus',
           'sponsorBackedINR',
           'notes',
@@ -293,9 +303,9 @@ export const VENDOR_QUOTE_COMPARISON_SCHEMA: Schema = {
     type: Type.OBJECT,
     properties: {
       id: { type: Type.STRING },
-      budgetFitScore: { type: Type.NUMBER },
-      campusReliabilityScore: { type: Type.NUMBER },
-      hiddenCostRisk: { type: Type.STRING },
+      budgetFitScore: { type: Type.NUMBER, minimum: 0, maximum: 100 },
+      campusReliabilityScore: { type: Type.NUMBER, minimum: 0, maximum: 100 },
+      hiddenCostRisk: { type: Type.STRING, enum: ['Low', 'Moderate', 'High'] },
       negotiationTip: { type: Type.STRING },
       aiRecommendationNote: { type: Type.STRING },
     },
@@ -314,23 +324,25 @@ export const VENDOR_QUOTES_EVALUATION_SCHEMA: Schema =
   VENDOR_QUOTE_COMPARISON_SCHEMA;
 
 export async function handlePlannerApiRequest(
-  req: Request | any,
-  res: Response | any
+  req: PlannerRequest,
+  res: PlannerResponse
 ) {
-  if (req.method === 'OPTIONS') {
-    res.setHeader?.('Access-Control-Allow-Origin', '*');
-    res.setHeader?.('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader?.('Access-Control-Allow-Headers', 'Content-Type');
-    return res.status?.(200).end?.();
+  res.setHeader('Cache-Control', 'no-store');
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
   }
-
-  const rawBody = req.body;
-  const parsedBody =
-    typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody;
-  const { action, payload } = parsedBody ?? {};
-  const ai = getServerGenAI();
-
+  if (!/^application\/json(?:\s*;|$)/i.test(String(req.headers['content-type'] ?? ''))) {
+    return res.status(415).json({ error: 'Content-Type must be application/json' });
+  }
   try {
+    const raw = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+    if (!raw) return res.status(400).json({ error: 'Request body is required' });
+    if (Buffer.byteLength(raw, 'utf8') > 128 * 1024) {
+      return res.status(413).json({ error: 'Request body is too large' });
+    }
+    const { action, payload } = plannerRequestSchema.parse(JSON.parse(raw));
+    const ai = getServerGenAI();
     if (action === 'generateClarifyingQuestions') {
       const intake: FestIntakeConfig =
         payload?.intake ?? INITIAL_FEST_MASTER_PLAN.intake;
@@ -364,7 +376,7 @@ Cover these 4 categories in order: "Campus Permissions", "Multi-Track Room Clash
             },
           });
           if (response.text) {
-            const parsed = JSON.parse(response.text) as ClarifyingQuestion[];
+            const parsed = questionsSchema.parse(JSON.parse(response.text));
             if (Array.isArray(parsed) && parsed.length > 0) {
               return res.json({ data: parsed, source: MODEL_NAME });
             }
@@ -377,7 +389,7 @@ Cover these 4 categories in order: "Campus Permissions", "Multi-Track Room Clash
       const tailoredQuestions =
         buildTailoredClarifyingQuestionsFromIntake(intake);
 
-      return res.json({ data: tailoredQuestions, source: MODEL_NAME });
+      return res.json({ data: tailoredQuestions, source: 'deterministic' });
     }
 
     if (
@@ -401,7 +413,10 @@ Cover these 4 categories in order: "Campus Permissions", "Multi-Track Room Clash
             },
           });
           if (response.text) {
-            const parsed = JSON.parse(response.text);
+            const parsed = synthesisSchema.parse(JSON.parse(response.text));
+            if (parsed.budget.reduce((sum, item) => sum + item.aiEstimateINR, 0) > intake.totalBudgetINR) {
+              throw new Error('Generated budget exceeds the intake cap');
+            }
             return res.json({ data: parsed, source: MODEL_NAME });
           }
         } catch {
@@ -413,7 +428,7 @@ Cover these 4 categories in order: "Campus Permissions", "Multi-Track Room Clash
 
       return res.json({
         data: { schedule: generated.schedule, budget: generated.budget },
-        source: MODEL_NAME,
+        source: 'deterministic',
       });
     }
 
@@ -423,7 +438,7 @@ Cover these 4 categories in order: "Campus Permissions", "Multi-Track Room Clash
     ) {
       const plan: FestMasterPlan = payload?.plan ?? INITIAL_FEST_MASTER_PLAN;
       const dynamicSummary = buildExecutiveOpsSummaryFromPlan(plan);
-      return res.json({ data: dynamicSummary, source: MODEL_NAME });
+      return res.json({ data: dynamicSummary, source: 'deterministic' });
     }
 
     if (
@@ -439,7 +454,7 @@ Cover these 4 categories in order: "Campus Permissions", "Multi-Track Room Clash
         festName,
       };
       const draft = buildCoordinatorOutreachFromTask(task, intake);
-      return res.json({ data: draft, source: MODEL_NAME });
+      return res.json({ data: draft, source: 'deterministic' });
     }
 
     if (
@@ -456,7 +471,7 @@ Cover these 4 categories in order: "Campus Permissions", "Multi-Track Room Clash
         plan,
         customPrompt
       );
-      return res.json({ data: dynamicResult, source: MODEL_NAME });
+      return res.json({ data: dynamicResult, source: 'deterministic' });
     }
 
     if (action === 'evaluateVendorQuotes') {
@@ -475,12 +490,16 @@ Cover these 4 categories in order: "Campus Permissions", "Multi-Track Room Clash
             },
           });
           if (response.text) {
-            const evals = JSON.parse(response.text) as Partial<VendorQuote>[];
+            const evals = evaluationsSchema.parse(JSON.parse(response.text));
+            const allowedIds = new Set(quotes.map(q => q.id));
+            if (evals.length !== quotes.length || new Set(evals.map(e => e.id)).size !== quotes.length ||
+                evals.some(e => !allowedIds.has(e.id))) throw new Error('Mismatched quote IDs');
+            const byId = new Map(evals.map(e => [e.id, e]));
             const merged = quotes.map((q) => {
-              const match = evals.find((e) => e.id === q.id);
+              const match = byId.get(q.id);
               return match ? { ...q, ...match } : q;
             });
-            return res.json({ data: merged, source: 'gemini-2.5-flash' });
+            return res.json({ data: merged, source: MODEL_NAME });
           }
         } catch {
           // Fall through to deterministic engine-calibrated quote scoring
@@ -496,7 +515,7 @@ Cover these 4 categories in order: "Campus Permissions", "Multi-Track Room Clash
             : Math.max(55, 85 - Math.round(delta / 1500));
         return {
           ...q,
-          budgetFitScore: q.budgetFitScore || budgetFitScore,
+          budgetFitScore,
         };
       });
 
@@ -505,12 +524,12 @@ Cover these 4 categories in order: "Campus Permissions", "Multi-Track Room Clash
 
     return res.status(400).json({ error: `Unknown planner action: ${action}` });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : 'Unexpected planner error';
-    return res.status(500).json({ error: message });
+    if (error instanceof SyntaxError || error instanceof ZodError) {
+      return res.status(400).json({ error: 'Invalid planner request' });
+    }
+    console.error('Planner request failed');
+    return res.status(500).json({ error: 'Unable to process planner request' });
   }
 }
 
-export default async function handler(req: any, res: any) {
-  return handlePlannerApiRequest(req, res);
-}
+export default handlePlannerApiRequest;
